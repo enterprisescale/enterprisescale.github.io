@@ -1,0 +1,837 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>The Mental Model Shift: From Lakehouse to Operational Platform — Palantir Foundry, Part 1</title>
+    <meta
+      name="description"
+      content="A data engineer's transition to Palantir Foundry: the Ontology is an operational write path, not a semantic view over a lakehouse."
+    />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="The Mental Model Shift: From Lakehouse to Operational Platform" />
+    <meta
+      property="og:description"
+      content="Part 1 of a three-part guide to Palantir Foundry for data engineers: datasets vs. the Ontology, idiomatic incremental transforms, and how Action writebacks actually persist."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@700,800&f[]=satoshi@400,500,700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='4' y='4' width='24' height='9' rx='2.5' fill='none' stroke='%230b57c9' stroke-width='2.5'/%3E%3Crect x='4' y='19' width='24' height='9' rx='2.5' fill='none' stroke='%230d6f72' stroke-width='2.5'/%3E%3Cpath d='M22 13v6' stroke='%239a5b06' stroke-width='2.5'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <div class="progress" id="progress" aria-hidden="true"></div>
+
+    <header class="header">
+      <div class="header__inner">
+        <a class="brand" href="#top" aria-label="Foundry Field Notes — home">
+          <svg width="30" height="30" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <rect x="3.5" y="4" width="25" height="8.5" rx="2.5" stroke="currentColor" stroke-width="2" />
+            <rect
+              x="3.5"
+              y="19.5"
+              width="25"
+              height="8.5"
+              rx="2.5"
+              stroke="currentColor"
+              stroke-width="2"
+              opacity="0.55"
+            />
+            <path d="M9 12.5v7" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            <path
+              d="M23 19.5v-7"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-dasharray="2.6 2.6"
+            />
+          </svg>
+          <span class="brand__name">
+            Foundry Field Notes
+            <span class="brand__sub">Engineering the operational layer</span>
+          </span>
+        </a>
+        <span class="header__spacer"></span>
+        <span class="header__series">PART 1 / 3</span>
+        <button class="icon-btn" data-theme-toggle aria-label="Switch to dark mode">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <main id="top">
+      <div class="wrap">
+        <section class="hero">
+          <span class="eyebrow">Part 1 · The mental model</span>
+          <h1>The Mental Model Shift: From Lakehouse to Operational Platform</h1>
+          <p class="hero__deck">
+            A data engineer's transition to Palantir Foundry: how the Ontology shifts the paradigm.
+          </p>
+        </section>
+
+        <div class="layout">
+          <aside class="toc" aria-label="Table of contents">
+            <p class="toc__title">On this page</p>
+            <ol>
+              <li><a href="#loop">The operational loop</a></li>
+              <li><a href="#abstraction">1 · Datasets vs. the Ontology</a></li>
+              <li><a href="#transactions">Transactions &amp; incrementality</a></li>
+              <li><a href="#incremental">2 · Idiomatic incremental transforms</a></li>
+              <li><a href="#writeback">3 · The writeback loop</a></li>
+              <li><a href="#next">Part 2</a></li>
+              <li><a href="#sources">Sources</a></li>
+            </ol>
+          </aside>
+
+          <article class="prose">
+            <p class="lead">
+              If your background is in Snowflake, Databricks, dbt, or a modern cloud data stack, your first
+              instinct when approaching Palantir Foundry is to treat it as a bundled lakehouse. You see PySpark
+              transforms, incremental datasets, branch controls, and pipeline graphs, and you assume:
+              <em>&ldquo;this is just managed Spark with a nice UI.&rdquo;</em>
+            </p>
+            <p>
+              That assumption holds up right until it doesn't. In a standard data stack, data flows in one
+              direction: source, ingest, transform, dashboard. Pipelines are read-heavy analytical engines, and
+              the last mile is a human looking at a chart.
+            </p>
+            <p>
+              Foundry is built around a bi-directional operational loop spanning two distinct tiers. Data flows
+              down into an operational layer, applications and agents mutate state in that layer, and those
+              mutations flow back into files. Once you internalize the loop, most of the platform's
+              &ldquo;weird&rdquo; behavior becomes obvious.
+            </p>
+
+            <figure id="loop" class="reveal">
+              <div class="panel">
+                <div class="panel__head">
+                  <span class="panel__title">The bi-directional operational loop</span>
+                  <span class="panel__hint">click any block for detail</span>
+                  <span class="panel__actions">
+                    <button class="chip-btn" id="flowToggle" aria-pressed="true">animate flow</button>
+                  </span>
+                </div>
+                <div class="arch">
+                  <div class="arch__canvas">
+                    <svg
+                      id="archSvg"
+                      class="is-flowing"
+                      viewBox="0 0 960 560"
+                      role="img"
+                      aria-label="Architecture diagram: the dataset layer indexes into the Ontology backed by Object Storage v2, which serves Workshop applications and AIP agents. Their writes go to the Actions service, then Funnel, which updates the live index and persists merged datasets back into the dataset layer."
+                    >
+                      <defs>
+                        <marker
+                          id="arrowRead"
+                          viewBox="0 0 10 10"
+                          refX="9"
+                          refY="5"
+                          markerWidth="5.5"
+                          markerHeight="5.5"
+                          orient="auto"
+                        >
+                          <path d="M0 0 L10 5 L0 10 z" fill="var(--color-primary)" opacity="0.75" />
+                        </marker>
+                        <marker
+                          id="arrowWrite"
+                          viewBox="0 0 10 10"
+                          refX="9"
+                          refY="5"
+                          markerWidth="5.5"
+                          markerHeight="5.5"
+                          orient="auto"
+                        >
+                          <path d="M0 0 L10 5 L0 10 z" fill="var(--color-amber)" opacity="0.8" />
+                        </marker>
+                      </defs>
+
+                      <!-- edges: read path -->
+                      <path class="edge edge--read" d="M265 168 L265 200" marker-end="url(#arrowRead)" />
+                      <text class="edge-label" x="278" y="190">batch / streaming indexing</text>
+                      <path class="edge edge--read" d="M265 402 L265 434" marker-end="url(#arrowRead)" />
+                      <text class="edge-label" x="278" y="424">low-latency reads</text>
+
+                      <!-- edges: write path -->
+                      <path class="edge edge--write" d="M470 484 L522 484" marker-end="url(#arrowWrite)" />
+                      <text class="edge-label" x="474" y="474">writes</text>
+                      <path class="edge edge--write" d="M715 440 L715 408" marker-end="url(#arrowWrite)" />
+                      <text class="edge-label" x="727" y="428">edit instruction</text>
+                      <path class="edge edge--write" d="M526 342 L478 342" marker-end="url(#arrowWrite)" />
+                      <text class="edge-label" x="476" y="332">hydrates</text>
+                      <path class="edge edge--write" d="M715 282 L715 174" marker-end="url(#arrowWrite)" />
+                      <text class="edge-label" x="727" y="232">flush · 6h max</text>
+                      <path class="edge edge--write" d="M526 100 L478 100" marker-end="url(#arrowWrite)" />
+                      <text class="edge-label" x="476" y="90">persists</text>
+
+                      <!-- A: dataset layer -->
+                      <g class="node node--data" data-key="dataset" tabindex="0" role="button">
+                        <rect class="node__box" x="60" y="32" width="410" height="136" rx="12" />
+                        <text class="node__kicker" x="78" y="54">TIER 1 · THE LAKEHOUSE</text>
+                        <text class="node__title" x="78" y="79">Dataset Layer</text>
+                        <text class="node__sub" x="78" y="100">Versioned files (typically Parquet) on S3 / HDFS</text>
+                        <rect class="chipbox" x="78" y="112" width="60" height="19" rx="4" />
+                        <text class="chiptext" x="108" y="125.5" text-anchor="middle">SNAPSHOT</text>
+                        <rect class="chipbox" x="144" y="112" width="50" height="19" rx="4" />
+                        <text class="chiptext" x="169" y="125.5" text-anchor="middle">APPEND</text>
+                        <rect class="chipbox" x="200" y="112" width="50" height="19" rx="4" />
+                        <text class="chiptext" x="225" y="125.5" text-anchor="middle">UPDATE</text>
+                        <rect class="chipbox" x="256" y="112" width="50" height="19" rx="4" />
+                        <text class="chiptext" x="281" y="125.5" text-anchor="middle">DELETE</text>
+                        <text class="node__kicker" x="78" y="152">CONTOUR · PIPELINE BUILDER · CODE REPOSITORIES</text>
+                      </g>
+
+                      <!-- SQL spans the tier boundary -->
+                      <g pointer-events="none">
+                        <rect class="chipbox" x="60" y="172" width="174" height="24" rx="6" />
+                        <text class="chiptext" x="147" y="187.5" text-anchor="middle">FOUNDRY SQL · BOTH TIERS</text>
+                      </g>
+
+                      <!-- B: ontology -->
+                      <rect class="node__box" x="60" y="200" width="410" height="202" rx="12" pointer-events="none" />
+                      <text class="node__kicker" x="78" y="222" pointer-events="none">TIER 2 · OPERATIONAL LAYER</text>
+                      <text class="node__title" x="78" y="246" pointer-events="none">The Ontology</text>
+                      <text class="node__kicker" x="196" y="246" pointer-events="none">BACKED BY OBJECT STORAGE V2</text>
+
+                      <g class="node node--onto" data-key="semantic" tabindex="0" role="button">
+                        <rect class="node__box" x="78" y="258" width="374" height="40" rx="8" />
+                        <text class="node__row" x="92" y="275" style="fill: var(--color-text); font-weight: 600">
+                          Semantic elements
+                        </text>
+                        <text class="node__kicker" x="92" y="290">OBJECT TYPES · PROPERTIES · LINK TYPES</text>
+                      </g>
+                      <g class="node node--onto" data-key="kinetic" tabindex="0" role="button">
+                        <rect class="node__box" x="78" y="304" width="374" height="40" rx="8" />
+                        <text class="node__row" x="92" y="321" style="fill: var(--color-text); font-weight: 600">
+                          Kinetic elements
+                        </text>
+                        <text class="node__kicker" x="92" y="336">ACTIONS · FUNCTIONS · DYNAMIC SECURITY</text>
+                      </g>
+                      <g class="node node--onto" data-key="storage" tabindex="0" role="button">
+                        <rect class="node__box" x="78" y="350" width="374" height="40" rx="8" />
+                        <text class="node__row" x="92" y="367" style="fill: var(--color-text); font-weight: 600">
+                          Storage &amp; query tier
+                        </text>
+                        <text class="node__kicker" x="92" y="382">EPHEMERAL SEARCH-NODE INDEXES + SPARK</text>
+                      </g>
+
+                      <!-- C: consumers -->
+                      <g class="node node--onto" data-key="consumers" tabindex="0" role="button">
+                        <rect class="node__box" x="60" y="434" width="410" height="94" rx="12" />
+                        <text class="node__kicker" x="78" y="456">OPERATIONAL SURFACES</text>
+                        <text class="node__title" x="78" y="481">Workshop apps &amp; AIP agents</text>
+                        <text class="node__sub" x="78" y="503">They read through the Ontology, not the file layer</text>
+                      </g>
+
+                      <!-- D: actions -->
+                      <g class="node node--write" data-key="actions" tabindex="0" role="button">
+                        <rect class="node__box" x="530" y="434" width="370" height="94" rx="12" />
+                        <text class="node__kicker" x="548" y="456">WRITEBACK · STEP 1</text>
+                        <text class="node__title" x="548" y="481">Actions Service</text>
+                        <text class="node__sub" x="548" y="503">Generates the modification instruction</text>
+                      </g>
+
+                      <!-- E: funnel -->
+                      <g class="node node--write" data-key="funnel" tabindex="0" role="button">
+                        <rect class="node__box" x="530" y="282" width="370" height="120" rx="12" />
+                        <text class="node__kicker" x="548" y="304">WRITEBACK · STEPS 2 &amp; 3</text>
+                        <text class="node__title" x="548" y="329">Funnel</text>
+                        <text class="node__sub" x="548" y="352">Managed offset queue &rarr; live OSv2 index</text>
+                        <text class="node__sub" x="548" y="374">Then flushes edits to durable datasets</text>
+                      </g>
+
+                      <!-- F: merged datasets -->
+                      <g class="node node--write" data-key="merged" tabindex="0" role="button">
+                        <rect class="node__box" x="530" y="32" width="370" height="136" rx="12" />
+                        <text class="node__kicker" x="548" y="54">WRITEBACK · DURABLE COPY</text>
+                        <text class="node__title" x="548" y="79">Funnel-owned merged datasets</text>
+                        <text class="node__sub" x="548" y="100">Datasource rows + user edits, merged by key</text>
+                        <text class="node__sub" x="548" y="122">Rebuilt per transaction, or every 6 hours</text>
+                        <text class="node__kicker" x="548" y="152">NOT USER-ACCESSIBLE · NOT IN YOUR LINEAGE</text>
+                      </g>
+                    </svg>
+                  </div>
+                  <div class="arch__aside" id="archAside" aria-live="polite">
+                    <!-- filled by JS -->
+                  </div>
+                </div>
+              </div>
+              <figcaption>
+                The read path (blue) runs down from files into the Ontology and out to applications. The write
+                path (amber) runs back up: Actions to Funnel, Funnel to the live index, and finally to durable
+                Foundry datasets. Foundry SQL sits on the boundary because it reads from either side of it.
+              </figcaption>
+            </figure>
+
+            <h2 id="abstraction"><span class="num">01</span> The core abstraction: datasets vs. the Ontology</h2>
+            <p>To build effectively in Foundry, you must separate platform storage into two tiers.</p>
+            <ul>
+              <li>
+                <strong><span class="tier-tag tier-tag--data">Tier 1</span> The dataset layer.</strong> A dataset
+                is a wrapper around a collection of files in a backing filesystem — a self-hosted HDFS cluster or
+                cloud storage such as Amazon S3 — with Foundry maintaining the mapping from logical to physical
+                path. Structured datasets hold tabular files, typically Parquet, plus column metadata. Versioning
+                is by transaction:
+                <code>SNAPSHOT</code>, <code>APPEND</code>, <code>UPDATE</code>, and <code>DELETE</code>, each an
+                atomic change analogous to a Git commit
+                (<a href="https://palantir.com/docs/foundry/data-integration/datasets/" target="_blank" rel="noopener"
+                  >Palantir: Datasets</a
+                >).
+              </li>
+              <li>
+                <strong><span class="tier-tag tier-tag--onto">Tier 2</span> The Ontology.</strong> The operational
+                layer of the enterprise. It contains <strong>semantic elements</strong> (objects, properties,
+                links) and <strong>kinetic elements</strong> (actions, functions, dynamic security), and it is
+                backed by multiple services in a microservices architecture — not a single database
+                (<a href="https://palantir.com/docs/foundry/ontology/overview/" target="_blank" rel="noopener"
+                  >Ontology overview</a
+                >,
+                <a href="https://palantir.com/docs/foundry/object-backend/overview/" target="_blank" rel="noopener"
+                  >Ontology architecture</a
+                >).
+              </li>
+              <li>
+                <strong>Object Storage v2 (OSv2).</strong> The object database that indexes and serves ontology
+                data — <em>a component of the Ontology, not a synonym for it</em>. Funnel converts merged rows into
+                index files stored in a separate index dataset; OSv2 then downloads those index files onto the
+                disks of its search nodes, a step called <strong>hydration</strong>
+                (<a
+                  href="https://palantir.com/docs/foundry/object-indexing/funnel-batch-pipelines"
+                  target="_blank"
+                  rel="noopener"
+                  >Funnel batch pipelines</a
+                >). It serves low-latency reads, search-arounds, and aggregations through a Spark-based query
+                execution layer.
+              </li>
+            </ul>
+
+            <div class="callout callout--rule">
+              <span class="callout__label">Key rule for engineers</span>
+              <p>
+                User-facing operational applications (Workshop) and AIP agents read through the Ontology, not the
+                raw dataset layer. The file-facing tools sit on the other side: Contour performs point-and-click
+                analysis on tables at scale
+                (<a href="https://www.palantir.com/docs/foundry/contour/overview" target="_blank" rel="noopener"
+                  >Contour</a
+                >), Pipeline Builder is Foundry's primary data-integration application and, with Code
+                Repositories, the main dataset-producing surface
+                (<a href="https://palantir.com/docs/foundry/pipeline-builder/overview/" target="_blank" rel="noopener"
+                  >Pipeline Builder</a
+                >), and Code Workspaces brings JupyterLab, RStudio Workbench, and VS Code onto the same datasets,
+                Iceberg tables, and virtual tables
+                (<a href="https://palantir.com/docs/foundry/code-workspaces/overview/" target="_blank" rel="noopener"
+                  >Code Workspaces</a
+                >). Foundry SQL is the one surface that deliberately spans both tiers — SQL Studio queries
+                datasets, tables, <em>and</em> ontology object types through a common Spark SQL dialect
+                (<a href="https://palantir.com/docs/foundry/sql-warehousing/overview/" target="_blank" rel="noopener"
+                  >SQL in Foundry</a
+                >).
+              </p>
+            </div>
+
+            <div class="callout callout--note">
+              <span class="callout__label">Tooling note</span>
+              <p>
+                If a tutorial you are following reaches for Code Workbook, check its lifecycle banner first: it is
+                &ldquo;in the legacy phase of development, and no additional development is expected,&rdquo; with
+                full support retained and other applications recommended instead
+                (<a href="https://palantir.com/docs/foundry/code-workbook/overview/" target="_blank" rel="noopener"
+                  >Code Workbook</a
+                >). For large-scale transformation work use Pipeline Builder or Code Repositories.
+              </p>
+            </div>
+
+            <div class="callout callout--note">
+              <span class="callout__label">Terminology note</span>
+              <p>
+                Older documentation and blog posts reference OSv1, codenamed Phonograph. It entered planned
+                deprecation and was scheduled to become unavailable after June 30, 2026, so treat OSv2 as the
+                backend you will actually encounter
+                (<a
+                  href="https://palantir.com/docs/foundry/object-databases/object-storage-v1/"
+                  target="_blank"
+                  rel="noopener"
+                  >Object Storage v1</a
+                >).
+              </p>
+            </div>
+
+            <h3 id="transactions">Why transaction type decides your pipeline's fate</h3>
+            <p>
+              Append-only history is what enables efficient incremental computation. An <code>APPEND</code> adds
+              new files and cannot modify existing ones; an <code>UPDATE</code> may overwrite the contents of
+              existing files, which breaks the append-only requirement and forces downstream consumers back to
+              full <code>SNAPSHOT</code> processing. Pick a tab to see what each transaction does to the current
+              dataset view.
+            </p>
+
+            <figure class="reveal">
+              <div class="panel">
+                <div class="panel__head">
+                  <span class="panel__title">Transaction types and downstream incrementality</span>
+                  <span class="panel__hint">interactive</span>
+                </div>
+                <div class="tx">
+                  <div class="tx__tabs" id="txTabs" role="tablist" aria-label="Transaction types">
+                    <button class="chip-btn is-active" role="tab" aria-selected="true" data-tx="snapshot">
+                      SNAPSHOT
+                    </button>
+                    <button class="chip-btn" role="tab" aria-selected="false" data-tx="append">APPEND</button>
+                    <button class="chip-btn" role="tab" aria-selected="false" data-tx="update">UPDATE</button>
+                    <button class="chip-btn" role="tab" aria-selected="false" data-tx="delete">DELETE</button>
+                  </div>
+                  <div class="tx__grid">
+                    <div class="tx__stage">
+                      <h4>Resulting dataset view</h4>
+                      <div class="files" id="txFiles"></div>
+                    </div>
+                    <div class="tx__verdict">
+                      <h4 style="font-family: var(--font-mono); font-size: var(--text-xs); letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-text-faint); font-weight: 400">
+                        Downstream incrementality
+                      </h4>
+                      <span class="verdict-badge" id="txBadge" data-ok="true"></span>
+                      <p id="txNote"></p>
+                    </div>
+                  </div>
+                  <div class="tx__legend">
+                    <span class="lg-kept">carried over</span>
+                    <span class="lg-new">newly added</span>
+                    <span class="lg-rewritten">overwritten</span>
+                    <span class="lg-dropped">removed from view</span>
+                  </div>
+                </div>
+              </div>
+              <figcaption>
+                Behavior per
+                <a href="https://palantir.com/docs/foundry/data-integration/datasets/" target="_blank" rel="noopener"
+                  >Palantir's dataset and transaction documentation</a
+                >. A <code>DELETE</code> removes the file reference from the view; it does not erase the
+                underlying file from the backing filesystem.
+              </figcaption>
+            </figure>
+
+            <h2 id="incremental"><span class="num">02</span> Reading and writing: idiomatic incremental transforms</h2>
+            <p>
+              In pure <strong>append-only</strong> transforms, added output rows are a function only of newly
+              added input rows. Changing column types, formatting dates as strings, and filtering all qualify.
+              The only difference required to make such a transform incremental is the
+              <code>incremental()</code> decoration — nothing else in the function body changes
+              (<a
+                href="https://palantir.com/docs/foundry/transforms-python-spark/incremental-examples/"
+                target="_blank"
+                rel="noopener"
+                >Incremental transforms: examples</a
+              >).
+            </p>
+
+            <div class="codeblock">
+              <div class="codeblock__head">
+                <span class="codeblock__lang">Python</span>
+                <span class="codeblock__file">append_only.py</span>
+                <button class="copy-btn" data-copy="code-append">copy</button>
+              </div>
+              <pre><code id="code-append"><span class="t-kw">from</span> transforms.api <span class="t-kw">import</span> transform, incremental, Input, Output
+
+<span class="t-com"># Append-only: the added output rows are a function of the added input rows.</span>
+<span class="t-dec">@incremental</span>()
+<span class="t-dec">@transform</span>(
+    students=<span class="t-cls">Input</span>(<span class="t-str">'/examples/students_hair_eye_color'</span>),
+    processed=<span class="t-cls">Output</span>(<span class="t-str">'/examples/hair_eye_color_processed'</span>),
+)
+<span class="t-kw">def</span> <span class="t-fn">incremental_filter</span>(students, processed):
+    new_students_df = students.<span class="t-fn">dataframe</span>()
+    processed.<span class="t-fn">write_dataframe</span>(
+        new_students_df.<span class="t-fn">filter</span>(new_students_df.hair == <span class="t-str">'Brown'</span>)
+    )</code></pre>
+            </div>
+
+            <p>
+              When you need to compare against previously computed state (Example: an upstream system sends 
+              overlapping batches to avoid data loss over network blips), you leave append-only territory and move
+              to the <strong>merge and append</strong> pattern, which the docs introduce with a precise phrase:
+              sometimes a transform needs to refer to its previous output in order to incrementally compute an
+              update. The default input read mode is <code>added</code>, which returns only rows appended since
+              the prior build <em>in an incremental run</em> — but cleanly falls back to returning the entire
+              dataset in a non-incremental run, because every row then counts as unseen
+              (<a
+                href="https://palantir.com/docs/foundry/transforms-python/incremental-reference/"
+                target="_blank"
+                rel="noopener"
+                >Incremental transforms reference</a
+              >).
+            </p>
+
+            <div class="codeblock">
+              <div class="codeblock__head">
+                <span class="codeblock__lang">Python</span>
+                <span class="codeblock__file">merge_and_append.py</span>
+                <button class="copy-btn" data-copy="code-merge">copy</button>
+              </div>
+              <pre><code id="code-merge"><span class="t-kw">from</span> transforms.api <span class="t-kw">import</span> transform, incremental, Input, Output
+
+<span class="t-com"># Merge and append: dedupe incoming rows against the previous output.</span>
+<span class="t-dec">@incremental</span>(semantic_version=<span class="t-num">1</span>, v2_semantics=<span class="t-kw">True</span>)
+<span class="t-dec">@transform</span>(
+    source_data=<span class="t-cls">Input</span>(<span class="t-str">'/path/to/incoming_raw_dataset'</span>),
+    processed_data=<span class="t-cls">Output</span>(<span class="t-str">'/path/to/incremental_output_dataset'</span>),
+)
+<span class="t-kw">def</span> <span class="t-fn">compute</span>(source_data, processed_data):
+    <span class="t-com"># 'added' returns newly appended rows in an incremental run,</span>
+    <span class="t-com"># or the entire dataset when running non-incrementally (all rows unseen).</span>
+    new_df = source_data.<span class="t-fn">dataframe</span>()
+
+    <span class="t-com"># Dedupe against the previous output. Passing a schema handles the</span>
+    <span class="t-com"># initial non-incremental run, where 'previous' is empty.</span>
+    delta_df = new_df.<span class="t-fn">distinct</span>().<span class="t-fn">subtract</span>(
+        processed_data.<span class="t-fn">dataframe</span>(<span class="t-str">'previous'</span>, schema=new_df.schema)
+    )
+
+    <span class="t-com"># Incremental run  -&gt; default write mode is 'modify' (append).</span>
+    <span class="t-com"># Non-incremental  -&gt; default write mode is 'replace'.</span>
+    processed_data.<span class="t-fn">write_dataframe</span>(delta_df)</code></pre>
+            </div>
+
+            <div class="callout callout--warn">
+              <span class="callout__label">Schema caveat</span>
+              <p>
+                Deduplication via <code>.subtract()</code> compares the input DataFrame against the output
+                DataFrame, so it requires the two schemas to match. If your transform maps fields, casts types, or
+                otherwise alters schema, append your transformed <code>added</code> rows directly instead of
+                subtracting.
+              </p>
+            </div>
+
+            <p>
+              The reason the same function body works in both execution modes is that the default modes are
+              designed to pair up. Read this table once and most incremental surprises stop being surprises.
+            </p>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Mode</th>
+                    <th scope="col">Incremental run</th>
+                    <th scope="col">Non-incremental run</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>added</code> <span class="tier-tag tier-tag--data">input default</span></td>
+                    <td>Rows appended since the transform last ran</td>
+                    <td>The entire dataset — all rows are considered unseen</td>
+                  </tr>
+                  <tr>
+                    <td><code>previous</code> <span class="tier-tag tier-tag--onto">output read</span></td>
+                    <td>The DataFrame produced by the last build</td>
+                    <td>An empty DataFrame — pass <code>schema=</code> so it can be constructed</td>
+                  </tr>
+                  <tr>
+                    <td><code>current</code></td>
+                    <td>The entire input for this run</td>
+                    <td>The entire input for this run</td>
+                  </tr>
+                  <tr>
+                    <td><code>modify</code> <span class="tier-tag tier-tag--write">write default (incremental)</span></td>
+                    <td><code>write_dataframe()</code> appends to the existing output</td>
+                    <td>Not the default — <code>replace</code> applies instead</td>
+                  </tr>
+                  <tr>
+                    <td><code>replace</code> <span class="tier-tag tier-tag--write">write default (snapshot)</span></td>
+                    <td>Only if set explicitly via <code>set_mode()</code></td>
+                    <td>Fully replaces the output with what this build wrote</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p style="font-size: var(--text-xs); color: var(--color-text-faint); margin-top: calc(-1 * var(--space-3))">
+              Modes and defaults per the
+              <a
+                href="https://palantir.com/docs/foundry/transforms-python/incremental-reference/"
+                target="_blank"
+                rel="noopener"
+                >incremental transforms reference</a
+              >. The decorator itself takes <code>require_incremental</code>, <code>semantic_version</code>,
+              <code>snapshot_inputs</code>, <code>allow_retention</code>, <code>strict_append</code>, and
+              <code>v2_semantics</code>; Palantir recommends all users set <code>v2_semantics=True</code>
+              (<a
+                href="https://palantir.com/docs/foundry/api-reference/transforms-python-library/api-incremental/"
+                target="_blank"
+                rel="noopener"
+                >API reference</a
+              >).
+            </p>
+
+            <h2 id="writeback"><span class="num">03</span> The writeback loop: how Actions actually persist</h2>
+            <p>
+              This is the part that breaks the lakehouse model outright. A user clicks a button in a Workshop app,
+              or an AIP agent invokes an Action, and a record changes — yet no Spark job ran and nothing in your
+              pipeline's build graph moved. Here is what actually happened, in order.
+            </p>
+
+            <figure class="reveal">
+              <div class="panel">
+                <div class="panel__head">
+                  <span class="panel__title">Anatomy of a writeback</span>
+                  <span class="panel__hint">step through it</span>
+                  <span class="panel__actions">
+                    <button class="chip-btn" id="stepPrev" aria-label="Previous step">&larr;</button>
+                    <button class="chip-btn" id="stepPlay">play</button>
+                    <button class="chip-btn" id="stepNext" aria-label="Next step">&rarr;</button>
+                  </span>
+                </div>
+                <div class="steps">
+                  <div class="rail" id="rail"></div>
+                  <div class="stage-card" id="stageCard" aria-live="polite"></div>
+                </div>
+              </div>
+              <figcaption>
+                Sequence per
+                <a
+                  href="https://palantir.com/docs/foundry/object-edits/how-edits-applied"
+                  target="_blank"
+                  rel="noopener"
+                  >Palantir's documentation on how user edits are applied</a
+                >
+                and
+                <a
+                  href="https://palantir.com/docs/foundry/object-indexing/funnel-batch-pipelines"
+                  target="_blank"
+                  rel="noopener"
+                  >Funnel batch pipelines</a
+                >.
+              </figcaption>
+            </figure>
+
+            <p>
+              The consequence worth internalizing: <strong>all indexed data in object databases is ephemeral</strong>.
+              The durable copy of your ontology state is the datasource plus the Funnel-owned merged dataset — not
+              the index that served the read. Persistence is still the file layer's job, which is exactly why the
+              two tiers stay coupled by a loop rather than a one-way pipeline.
+            </p>
+
+            <div class="callout callout--warn">
+              <span class="callout__label">Consistency tradeoff</span>
+              <p>
+                Under OSv2 the Actions service only version-checks objects directly used to generate edits. This
+                reduces <code>StaleObject</code> conflicts, but the guarantee is genuinely weaker: objects read
+                during an Action without being edited are not guaranteed to have stayed unchanged for the duration
+                of the apply. If your Action derives one object's value from another, that read is not protected
+                the way an OSv1 cross-check would have been. In database terms, <strong>OSv1 targeted Serializable 
+                isolation</strong> (read-set validation), whereas <strong>OSv2 operates like Snapshot Isolation</strong> 
+                (write-set validation)—preventing shared reference objects from causing cascading transaction 
+                aborts across the enterprise.
+              </p>
+            </div>
+
+            <h3>Where to look when you need forensics</h3>
+            <p>
+              Because the merged datasets are owned and managed internally by Funnel, they never appear in your
+              pipeline's build graph. That is a visibility boundary, not a missing audit trail — you just have to
+              use the right tool.
+            </p>
+            <ul>
+              <li>
+                <strong>Dependencies and downstream impact:</strong> Workflow Lineage manages workflows built on
+                top of the Ontology and can show all downstream usages for a specific column in an object,
+                including dependent actions and Workshop applications
+                (<a href="https://palantir.com/docs/foundry/workflow-lineage/overview/" target="_blank" rel="noopener"
+                  >Workflow Lineage</a
+                >). Data Lineage covers the end-to-end path from source to Ontology to workflow, and object types
+                can be added to the lineage graph directly
+                (<a
+                  href="https://palantir.com/docs/foundry/data-lineage/explore-artifacts/"
+                  target="_blank"
+                  rel="noopener"
+                  >Data Lineage</a
+                >).
+              </li>
+              <li>
+                <strong>Operational writes:</strong> the Action log models action submissions as object types, one
+                log object type per action type, all prefixed <code>[LOG]</code>. Each submission creates a single
+                log object automatically linked to every object the action edited, capturing action RID, action
+                type version, timestamp, user ID, and the primary keys of edited objects. It is
+                <em>opt-in and configured per action type</em> — for function-backed action types the backing
+                Ontology edit function must have <code>Edits</code> provenance configured. If you want a record of
+                every edit regardless of action, enable edit history on the object type instead
+                (<a href="https://www.palantir.com/docs/foundry/action-types/action-log" target="_blank" rel="noopener"
+                  >Action log</a
+                >).
+              </li>
+            </ul>
+
+            <div class="callout callout--rule">
+              <span class="callout__label">Takeaway:</span>
+              <p>
+                Datasets provide immutable historical storage, while the Ontology serves as the transactional, write-capable layer that application logic and agents interact with directly.
+              </p>
+            </div>
+
+            <h3 id="next">Part 2 soon…</h3>
+
+            <section class="sources" id="sources">
+              <h2><span class="num">&sect;</span> Sources</h2>
+              <ol>
+                <li>
+                  Palantir — Ontology overview:
+                  <a href="https://palantir.com/docs/foundry/ontology/overview/" target="_blank" rel="noopener"
+                    >palantir.com/docs/foundry/ontology/overview</a
+                  >
+                </li>
+                <li>
+                  Palantir — Ontology architecture (object databases, Funnel, Actions):
+                  <a href="https://palantir.com/docs/foundry/object-backend/overview/" target="_blank" rel="noopener"
+                    >palantir.com/docs/foundry/object-backend/overview</a
+                  >
+                </li>
+                <li>
+                  Palantir — Datasets, transactions, and ingestion patterns:
+                  <a href="https://palantir.com/docs/foundry/data-integration/datasets/" target="_blank" rel="noopener"
+                    >palantir.com/docs/foundry/data-integration/datasets</a
+                  >
+                </li>
+                <li>
+                  Palantir — Funnel batch pipelines and hydration:
+                  <a
+                    href="https://palantir.com/docs/foundry/object-indexing/funnel-batch-pipelines"
+                    target="_blank"
+                    rel="noopener"
+                    >palantir.com/docs/foundry/object-indexing/funnel-batch-pipelines</a
+                  >
+                </li>
+                <li>
+                  Palantir — How user edits are applied (offset queue, 6-hour flush, version checks):
+                  <a
+                    href="https://palantir.com/docs/foundry/object-edits/how-edits-applied"
+                    target="_blank"
+                    rel="noopener"
+                    >palantir.com/docs/foundry/object-edits/how-edits-applied</a
+                  >
+                </li>
+                <li>
+                  Palantir — Incremental transforms reference (read and write modes):
+                  <a
+                    href="https://palantir.com/docs/foundry/transforms-python/incremental-reference/"
+                    target="_blank"
+                    rel="noopener"
+                    >palantir.com/docs/foundry/transforms-python/incremental-reference</a
+                  >
+                </li>
+                <li>
+                  Palantir — Incremental transforms examples (append-only, merge and append):
+                  <a
+                    href="https://palantir.com/docs/foundry/transforms-python-spark/incremental-examples/"
+                    target="_blank"
+                    rel="noopener"
+                    >palantir.com/docs/foundry/transforms-python-spark/incremental-examples</a
+                  >
+                </li>
+                <li>
+                  Palantir — <code>transforms.api.incremental</code> API reference:
+                  <a
+                    href="https://palantir.com/docs/foundry/api-reference/transforms-python-library/api-incremental/"
+                    target="_blank"
+                    rel="noopener"
+                    >palantir.com/docs/foundry/api-reference/transforms-python-library/api-incremental</a
+                  >
+                </li>
+                <li>
+                  Palantir — Workflow Lineage:
+                  <a href="https://palantir.com/docs/foundry/workflow-lineage/overview/" target="_blank" rel="noopener"
+                    >palantir.com/docs/foundry/workflow-lineage/overview</a
+                  >
+                </li>
+                <li>
+                  Palantir — Data Lineage: explore artifacts and ontology entities:
+                  <a
+                    href="https://palantir.com/docs/foundry/data-lineage/explore-artifacts/"
+                    target="_blank"
+                    rel="noopener"
+                    >palantir.com/docs/foundry/data-lineage/explore-artifacts</a
+                  >
+                </li>
+                <li>
+                  Palantir — Action log:
+                  <a href="https://www.palantir.com/docs/foundry/action-types/action-log" target="_blank" rel="noopener"
+                    >palantir.com/docs/foundry/action-types/action-log</a
+                  >
+                </li>
+                <li>
+                  Palantir — Contour overview:
+                  <a href="https://www.palantir.com/docs/foundry/contour/overview" target="_blank" rel="noopener"
+                    >palantir.com/docs/foundry/contour/overview</a
+                  >
+                </li>
+                <li>
+                  Palantir — Quiver overview (object and time series data from the Ontology):
+                  <a href="https://www.palantir.com/docs/foundry/quiver/overview" target="_blank" rel="noopener"
+                    >palantir.com/docs/foundry/quiver/overview</a
+                  >
+                </li>
+                <li>
+                  Palantir — SQL in Foundry (both tiers, common Spark SQL dialect):
+                  <a href="https://palantir.com/docs/foundry/sql-warehousing/overview/" target="_blank" rel="noopener"
+                    >palantir.com/docs/foundry/sql-warehousing/overview</a
+                  >
+                </li>
+                <li>
+                  Palantir — SQL Studio (queries datasets, tables, and ontology object types):
+                  <a href="https://palantir.com/docs/foundry/sql-warehousing/sql-studio/" target="_blank" rel="noopener"
+                    >palantir.com/docs/foundry/sql-warehousing/sql-studio</a
+                  >
+                </li>
+                <li>
+                  Palantir — Pipeline Builder overview:
+                  <a href="https://palantir.com/docs/foundry/pipeline-builder/overview/" target="_blank" rel="noopener"
+                    >palantir.com/docs/foundry/pipeline-builder/overview</a
+                  >
+                </li>
+                <li>
+                  Palantir — Code Workspaces overview:
+                  <a href="https://palantir.com/docs/foundry/code-workspaces/overview/" target="_blank" rel="noopener"
+                    >palantir.com/docs/foundry/code-workspaces/overview</a
+                  >
+                </li>
+                <li>
+                  Palantir — Code Workbook, legacy lifecycle notice:
+                  <a href="https://palantir.com/docs/foundry/code-workbook/overview/" target="_blank" rel="noopener"
+                    >palantir.com/docs/foundry/code-workbook/overview</a
+                  >
+                </li>
+                <li>
+                  Palantir — Object Storage v1 (Phonograph), planned deprecation:
+                  <a
+                    href="https://palantir.com/docs/foundry/object-databases/object-storage-v1/"
+                    target="_blank"
+                    rel="noopener"
+                    >palantir.com/docs/foundry/object-databases/object-storage-v1</a
+                  >
+                </li>
+              </ol>
+            </section>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer__inner">
+        <span>Palantir, Foundry, Workshop, and AIP are trademarks of Palantir Technologies Inc.</span>
+      </div>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
