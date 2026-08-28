@@ -828,9 +828,38 @@
 
     <footer class="footer">
       <div class="footer__inner">
-        <span>Palantir, Foundry, Workshop, and AIP are trademarks of Palantir Technologies Inc.</span>
+        <p class="footer__legal">
+          Palantir, Foundry, Workshop, and AIP are trademarks of Palantir Technologies Inc.
+        </p>
+
+        <p class="footer__privacy">
+          <span class="footer__privacy-label">Privacy note</span>
+          This site uses cookieless, privacy-preserving Cloudflare Web Analytics to understand
+          aggregate traffic trends. It does not use tracking cookies, local storage, or cross-site
+          visitor tracking.
+        </p>
+
+        <p class="footer__feedback">
+        <span class="footer__feedback-label">Discussion</span>
+          <a
+            href="https://github.com/enterprisescale/enterprisescale.github.io/discussions/1"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Open GitHub Discussions for feedback in a new tab"
+          >
+            Questions, concerns, or feedback via GitHub Discussions
+            <span class="footer__external" aria-hidden="true">↗</span>
+          </a>
+        </p>
       </div>
     </footer>
+
+    <!-- Cloudflare Web Analytics -->
+    <script type='module' 
+      src='https://static.cloudflareinsights.com/beacon.min.js' 
+      data-cf-beacon='{"token": "e70d9803a3084641adefa514cc838363"}'>
+    </script>
+    <!-- End Cloudflare Web Analytics -->
 
     <script src="app.js"></script>
   </body>
