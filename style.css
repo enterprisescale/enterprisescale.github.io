@@ -35,8 +35,8 @@
   --content-default: 980px;
   --content-wide: 1240px;
 
-  --font-display: 'Cabinet Grotesk', 'Satoshi', 'Helvetica Neue', sans-serif;
-  --font-body: 'Satoshi', 'Inter', 'Helvetica Neue', sans-serif;
+  --font-display: 'Space Grotesk', 'Inter', 'Helvetica Neue', sans-serif;
+  --font-body: 'Inter', 'Helvetica Neue', sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
 }
 

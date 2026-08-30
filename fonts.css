@@ -1,0 +1,36 @@
+/* ---------- self-hosted fonts — no third-party requests ----------
+   Space Grotesk  (c) The Space Grotesk Project Authors  — SIL OFL 1.1
+   Inter          (c) The Inter Project Authors          — SIL OFL 1.1
+   JetBrains Mono (c) The JetBrains Mono Project Authors — SIL OFL 1.1
+
+   All three are SIL Open Font License 1.1, which permits redistribution,
+   bundling, and hosting in a public repository. Full license texts are in
+   fonts/*-OFL.txt and must stay with the font files.
+
+   Each file is a variable font covering the full weight range below, so one
+   file serves every weight the stylesheet asks for (400, 500, 600, 700).
+------------------------------------------------------------------- */
+
+@font-face {
+  font-family: 'Space Grotesk';
+  src: url('fonts/SpaceGrotesk-Variable.woff2') format('woff2');
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Inter';
+  src: url('fonts/Inter-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('fonts/JetBrainsMono-Variable.woff2') format('woff2');
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: swap;
+}
