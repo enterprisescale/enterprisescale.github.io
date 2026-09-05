@@ -1,0 +1,1280 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Correcting History Without Burning the House Down — Palantir Foundry, Part 2</title>
+    <meta
+      name="description"
+      content="A decision ladder for remediating bad data in Palantir Foundry: semantic_version hard resets, auxiliary replay backfills, hash-diff CDC, and scoped rollback — and what each one does to the live Ontology."
+    />
+    <link rel="canonical" href="https://enterprisescale.github.io/part-2/" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Foundry Field Notes" />
+    <meta property="og:url" content="https://enterprisescale.github.io/part-2/" />
+    <meta property="og:title" content="Correcting History Without Burning the House Down" />
+    <meta
+      property="og:description"
+      content="Part 2 of a three-part guide to Palantir Foundry for data engineers: a decision ladder for fixing bad data without stalling the operational loop."
+    />
+    <meta property="og:image" content="https://enterprisescale.github.io/part-2/og-image.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="627" />
+    <meta
+      property="og:image:alt"
+      content="A decision ladder for remediating bad data in Palantir Foundry, from scoped rollback to semantic_version hard reset."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Correcting History Without Burning the House Down" />
+    <meta
+      name="twitter:description"
+      content="Part 2 of a three-part guide to Palantir Foundry for data engineers: a decision ladder for fixing bad data without stalling the operational loop."
+    />
+    <meta name="twitter:image" content="https://enterprisescale.github.io/part-2/og-image.jpg" />
+    <meta
+      name="twitter:image:alt"
+      content="A decision ladder for remediating bad data in Palantir Foundry, from scoped rollback to semantic_version hard reset."
+    />
+    <link rel="preload" href="../fonts/Inter-Variable.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="../fonts/SpaceGrotesk-Variable.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="../fonts/JetBrainsMono-Variable.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="../fonts.css" />
+    <link rel="stylesheet" href="../style.css" />
+    <link rel="stylesheet" href="part-2.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='4' y='4' width='24' height='9' rx='2.5' fill='none' stroke='%230b57c9' stroke-width='2.5'/%3E%3Crect x='4' y='19' width='24' height='9' rx='2.5' fill='none' stroke='%230d6f72' stroke-width='2.5'/%3E%3Cpath d='M22 13v6' stroke='%239a5b06' stroke-width='2.5'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body id="top">
+    <div class="progress" id="progress" aria-hidden="true"></div>
+
+    <header class="header">
+      <div class="header__inner">
+        <a class="brand" href="../index.html" aria-label="Foundry Field Notes — home">
+          <svg width="30" height="30" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <rect x="3.5" y="4" width="25" height="8.5" rx="2.5" stroke="currentColor" stroke-width="2" />
+            <rect
+              x="3.5"
+              y="19.5"
+              width="25"
+              height="8.5"
+              rx="2.5"
+              stroke="currentColor"
+              stroke-width="2"
+              opacity="0.55"
+            />
+            <path d="M9 12.5v7" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            <path
+              d="M23 19.5v-7"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-dasharray="2.6 2.6"
+            />
+          </svg>
+          <span class="brand__name">
+            Foundry Field Notes
+            <span class="brand__sub">Engineering the operational layer</span>
+          </span>
+        </a>
+        <span class="header__spacer"></span>
+        <span class="header__series">PART 2 / 3</span>
+        <button class="icon-btn" data-theme-toggle aria-label="Switch to dark mode">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <section class="hero">
+        <p class="eyebrow">Palantir Foundry · Part 2 of 3 · Remediation</p>
+        <h1>Correcting History Without Burning the House Down</h1>
+        <p class="hero__deck">
+          Part 1 covered why Foundry isn't just a lakehouse. This one covers what happens when the data flowing through
+          that operational loop turns out to be wrong — and why the warehouse reflex of "patch the code, overwrite the
+          table" picks the wrong tool most of the time.
+        </p>
+      </section>
+
+      <div class="p2-recap reveal">
+        <p class="p2-recap__k">Where part 1 left off</p>
+        <p>
+          Foundry's dataset layer isn't the last mile: it feeds a live, queryable Ontology that Workshop apps and agents
+          read and write through continuously — the two-tier model, plus the Actions writeback loop, covered in
+          <a href="../index.html">Part 1: The Mental Model Shift</a>. Everything below
+          assumes that second tier exists.
+        </p>
+      </div>
+
+      <div class="layout">
+        <aside class="toc" aria-label="On this page">
+          <p class="toc__title">On this page</p>
+          <ol>
+            <li><a href="#baseline">The lakehouse baseline</a></li>
+            <li><a href="#step0">Step 0 · Find the bad transaction</a></li>
+            <li><a href="#ladder">The decision ladder</a></li>
+            <li><a href="#rung1">Rung 1 · Semantic or value?</a></li>
+            <li><a href="#rung2">Rung 2 · The hard reset</a></li>
+            <li><a href="#edits">The invisible edits</a></li>
+            <li><a href="#conflict">Conflict resolution</a></li>
+            <li><a href="#reindex">The reindex window</a></li>
+            <li><a href="#writes">Concurrent writes</a></li>
+            <li><a href="#rung3">Rung 3 · Backfill patterns</a></li>
+            <li><a href="#rung4">Rung 4 · Scoped rollback</a></li>
+            <li><a href="#sidebyside">Side by side</a></li>
+            <li><a href="#sources">Sources</a></li>
+          </ol>
+        </aside>
+
+        <article class="prose">
+          <p class="lead">
+            A pipeline can fail mid-run, a transform's logic can be subtly incorrect, a source system can emit bad values
+            for weeks before anyone notices, or a bad write can duplicate a day of history. Each of these calls for a
+            different fix, and the warehouse reflex doesn't distinguish between them; applied to the wrong one, it either
+            under-corrects the data or stalls the operational loop.
+          </p>
+
+          <p>
+            This post walks through a decision ladder covering the tradeoffs across these scenarios. Read it end to end
+            for the full picture, or jump directly to the rung matching your own situation. A single running example —
+            three weeks of bad data that went undetected in production — threads through the walkthrough to keep the
+            tradeoffs concrete, but the ladder itself generalizes past that one case.
+          </p>
+
+          <h2 id="baseline"><span class="num">01</span>The 30,000-foot lakehouse baseline</h2>
+
+          <p>
+            In a traditional cloud warehouse (Snowflake, Databricks, BigQuery), the table under the bug is a stateless
+            analytics view. The standard fix is a full <code>INSERT OVERWRITE</code>: recompute the table from raw data
+            with the corrected code and commit a new version. On Iceberg or Delta this doesn't even discard history — it
+            commits a new snapshot, and prior snapshots stay addressable until they expire. This works because the last
+            mile is a dashboard or a batch job that queries periodically. Swapping the table underneath costs compute
+            time, not uptime.
+          </p>
+
+          <p>
+            Foundry's dataset layer looks similar on the surface — transactions, snapshots, incremental reads. The
+            difference is what sits downstream of it: the dataset isn't the last mile. It feeds a live, queryable
+            Ontology that Workshop apps and agents read and write through continuously. That second tier is why the
+            warehouse reflex needs to be replaced, not just ported over.
+          </p>
+
+          <h2 id="step0"><span class="num">02</span>Step 0: find the bad transaction before you touch anything</h2>
+
+          <p>
+            Before choosing a remediation, scope the damage. Foundry's
+            <a href="https://www.palantir.com/docs/foundry/dataset-preview/time-travel">Time Travel</a> (beta) in Dataset
+            Preview is built for exactly this: it lets you inspect a dataset or Iceberg table across its committed
+            versions, diff a range for added/removed/modified rows against a key column, and run <b>Bisect</b> to search
+            version history for the first commit where a specific cell value changed.
+          </p>
+
+          <figure class="panel reveal">
+            <div class="panel__head">
+              <div>
+                <p class="panel__title">Bisect, step by step</p>
+                <p class="panel__hint">
+                  Fourteen committed versions. One of them first introduced the bad value. Run the search.
+                </p>
+              </div>
+              <div class="panel__actions">
+                <button class="chip-btn" id="bisectStep">step</button>
+                <button class="chip-btn" id="bisectAuto">run bisect</button>
+                <button class="chip-btn" id="bisectReset">reset</button>
+              </div>
+            </div>
+            <div class="p2-bisect__track" id="bisectTrack" aria-hidden="true"></div>
+            <div class="p2-bisect__log" id="bisectLog" role="status" aria-live="polite"></div>
+            <figcaption class="p2-figcap">
+              Each probe halves the search space. Fourteen versions resolve in four probes — which is why Bisect is worth
+              reaching for before a date-range guess.
+            </figcaption>
+          </figure>
+
+          <p>
+            Two limits matter here: Bisect only searches versions already loaded on the page, and it can only inspect
+            versions still available under the dataset's retention policy. If the bad transaction fell outside retention,
+            you're scoping by date range and downstream lineage instead of a precise bisect. Once you know
+            <em>which transaction</em> and <em>how many rows</em>, you're ready for the actual decision.
+          </p>
+
+          <div class="p2-insight p2-insight--call">
+            <p class="p2-insight__label">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                <path d="M12 3v3M12 18v3M3 12h3M18 12h3M6.3 6.3l2.1 2.1M15.6 15.6l2.1 2.1M17.7 6.3l-2.1 2.1M8.4 15.6l-2.1 2.1" />
+              </svg>
+              Practitioner call
+            </p>
+            <p>
+              The mechanics cited throughout this ladder — Funnel's pipeline stages, edit-queue behavior,
+              schema-migration rules — are drawn directly from Palantir's documentation and community threads, linked
+              inline. The ladder that organizes them into a decision path is my own mental model for navigating the
+              tradeoffs, not an official Palantir framework.
+            </p>
+          </div>
+
+          <h2 id="ladder"><span class="num">03</span>The decision ladder</h2>
+
+          <p>
+            The choice of remediation depends on where the problem originates: the pipeline's own execution, or the data
+            it was fed. Answer the two or three questions below and the ladder resolves to a single rung — or click any
+            node directly to see the path of decisions that reaches it.
+          </p>
+
+          <figure class="panel reveal">
+            <div class="panel__head">
+              <div>
+                <p class="panel__title">The decision ladder</p>
+                <p class="panel__hint">Guided mode asks the questions. Click on an option - the blocks with the border runners below.</p>
+                <p class="panel__hint">Explore mode lets you click any node in the decision ladder.</p>
+              </div>
+              <div class="panel__actions">
+                <button class="chip-btn is-active" data-treemode="guide" aria-pressed="true">guide me</button>
+                <button class="chip-btn" data-treemode="explore" aria-pressed="false">explore</button>
+                <button class="chip-btn" id="treeReset">restart</button>
+              </div>
+            </div>
+
+            <div class="p2-crumbs" id="treeCrumbs" role="status" aria-live="polite"></div>
+
+            <div class="p2-tree">
+              <div class="p2-tree__canvas">
+                <svg id="treeSvg" viewBox="0 0 1040 456" role="img" aria-label="Interactive decision ladder">
+                  <g id="treeEdges"></g>
+                  <g id="treeLabels"></g>
+                  <g id="treeNodes"></g>
+                </svg>
+              </div>
+              <div class="p2-tree__aside" id="treeAside"></div>
+            </div>
+
+          </figure>
+
+          <h2 id="rung1"><span class="num">04</span>Rung 1 — did the meaning of the transform change, or just its output?</h2>
+
+          <p>
+            Once you've ruled out a pipeline-execution issue (that's Rung 4 — a duplicate run, a bad write, a job that
+            just needs to reproduce correct output with the existing or now-fixed pipeline), this is the next fork.
+          </p>
+
+          <div class="p2-grid2 reveal">
+            <div class="p2-card">
+              <p class="p2-kicker">Semantic break → hard reset</p>
+              <h5>The logic or semantics changed</h5>
+              <p>
+                A join key was wrong, a filter excluded the wrong population, the business definition of a field changed.
+                The historical rows were never valid under any interpretation.
+              </p>
+            </div>
+            <div class="p2-card">
+              <p class="p2-kicker">Value break → backfill</p>
+              <h5>The intent was right, a bug corrupted values</h5>
+              <p>
+                A cast overflowed, a null-handling branch was missing, a formula had a sign error. The fix is a value
+                correction on a known set of rows.
+              </p>
+            </div>
+          </div>
+
+          <p>
+            The second case is more common in practice; the first applies specifically when the transform's definition
+            itself needs to change.
+          </p>
+
+          <h2 id="rung2"><span class="num">05</span>Rung 2 — the <code>semantic_version</code> hard reset</h2>
+
+          <p>
+            Foundry's <code>@incremental()</code> decorator accepts a <code>semantic_version</code> argument specifically
+            for this. Raising it forces the next run to be non-incremental: <code>previous</code> comes back empty, the
+            transform is presented the full input as if for the first time, and the default output write mode switches to
+            <code>replace</code> — a full rewrite of the output
+            (<a href="https://palantir.com/docs/foundry/transforms-python/incremental-usage/"
+              >Incremental transforms usage guide</a
+            >).
+          </p>
+
+          <p>
+            This is the right tool when the transform's <em>definition</em> changed and every historical row needs to be
+            recomputed under the new definition — Palantir's own guidance is to review <code>semantic_version</code>
+            whenever an input or logic change "fundamentally changes the semantics of the transform." It is the wrong
+            tool when only a subset of rows in a fixed window are wrong, because a full <code>replace</code> rewrites
+            100% of the output regardless of how small the actual damage was.
+          </p>
+
+          <figure class="panel reveal">
+            <div class="panel__head">
+              <div>
+                <p class="panel__title">Funnel's 80% rule, as a dial</p>
+                <p class="panel__hint">
+                  Drag to set how much of the datasource carries modified values in a single transaction.
+                </p>
+              </div>
+            </div>
+            <div class="p2-slider">
+              <div class="p2-slider__row">
+                <label class="p2-controls__label" for="thresholdRange">rows changed</label>
+                <input id="thresholdRange" type="range" min="0" max="100" value="18" step="1" />
+                <span class="p2-slider__val" id="thresholdVal">18%</span>
+              </div>
+              <div class="p2-meter" id="thresholdMeter">
+                <div class="p2-meter__fill" id="thresholdFill" style="width: 18%"></div>
+                <div class="p2-meter__line"></div>
+              </div>
+              <div class="p2-verdict">
+                <span class="p2-verdict__badge" id="thresholdBadge" data-mode="incremental">incremental</span>
+                <p id="thresholdNote"></p>
+              </div>
+            </div>
+            <figcaption class="p2-figcap">
+              Funnel inspects row-level content diffs rather than transaction types, but the diff still has a breaking
+              point: by default, more than 80% of rows carrying modified values in a single transaction abandons
+              incremental indexing in favor of a full batch reindex
+              (<a href="https://palantir.com/docs/foundry/object-indexing/funnel-batch-pipelines/"
+                >Funnel batch pipelines</a
+              >).
+            </figcaption>
+          </figure>
+
+          <p>
+            A <code>semantic_version</code> bump rewrites 100% of the output, so it almost always crosses that line —
+            which is exactly why it should be reserved for genuine semantic breaks, not value-level bugs. It functions as
+            a last resort — not because it carries inherent risk, but because it's disproportionate to a value-level bug.
+          </p>
+
+          <div class="codeblock">
+            <div class="codeblock__head">
+              <span class="codeblock__lang">python</span>
+              <span class="codeblock__file">transforms/orders.py</span>
+              <button class="copy-btn" data-copy="code-semver">copy</button>
+            </div>
+            <pre><code id="code-semver"><span class="t-dec">@incremental</span>(semantic_version=<span class="t-num">2</span>)
+<span class="t-dec">@transform_df</span>(...)
+<span class="t-kw">def</span> <span class="t-fn">compute_orders</span>(raw_orders):
+    <span class="t-com"># Runs non-incrementally exactly once: raw_orders is the full input,</span>
+    <span class="t-com"># previous is empty, and the output is written with mode='replace'.</span>
+    <span class="t-kw">return</span> transformed_df</code></pre>
+          </div>
+
+          <h2 id="edits"><span class="num">06</span>The hard reset vs. the invisible edits</h2>
+
+          <p>
+            Rung 2 raises an obvious follow-up: while your <code>semantic_version</code> bump was rewriting six months of
+            history, operators were still using the Ontology — clicking Actions in Workshop, correcting records by hand.
+            What happens to those edits when the baseline underneath them gets replaced wholesale?
+          </p>
+
+          <div class="p2-led" data-led-group="edits">
+            <div class="p2-led__bar">
+              <p class="p2-led__label">Three mechanics answer that. Open the ones you need.</p>
+              <button type="button" class="chip-btn" data-led-all="edits" aria-pressed="false">expand all</button>
+            </div>
+
+            <div class="p2-led__row">
+              <button type="button" class="p2-led__sum" aria-expanded="false" aria-controls="led-edits-1">
+                <span class="p2-led__n" aria-hidden="true">01</span>
+                <span class="p2-led__t">Where edits actually live</span>
+                <span class="p2-led__h">A Funnel-owned queue</span>
+                <span class="p2-led__ic" aria-hidden="true"></span>
+              </button>
+              <div class="p2-led__rule" aria-hidden="true"></div>
+              <div class="p2-led__wrap"><div class="p2-led__clip"><div class="p2-led__body" id="led-edits-1" role="region">
+          <p>
+            User edits are never written into your pipeline's own output dataset. When an Action fires, the Actions
+            service sends a modification instruction to Funnel, which stores it in an offset-tracked queue, applies it
+            immediately to the live OSv2 index (so reads are consistent right away), and only later flushes it into a
+            separate, Funnel-owned merged dataset that combines datasource rows with user edits — a dataset that never
+            appears in your pipeline's build graph
+            (<a href="https://www.palantir.com/docs/foundry/object-edits/how-edits-applied/">How user edits are applied</a
+            >). Your <code>semantic_version</code> reset rewrites the dataset <em>you</em> own; it does not touch that
+            separate edit queue at all.
+          </p>
+
+          
+              </div></div></div>
+            </div>
+
+            <div class="p2-led__row">
+              <button type="button" class="p2-led__sum" aria-expanded="false" aria-controls="led-edits-2">
+                <span class="p2-led__n" aria-hidden="true">02</span>
+                <span class="p2-led__t">Reconciliation is unchanged by a reset</span>
+                <span class="p2-led__h">Same four stages</span>
+                <span class="p2-led__ic" aria-hidden="true"></span>
+              </button>
+              <div class="p2-led__rule" aria-hidden="true"></div>
+              <div class="p2-led__wrap"><div class="p2-led__clip"><div class="p2-led__body" id="led-edits-2" role="region">
+          <p>
+            Every Funnel batch pipeline — incremental or full-reindex — runs the same four stages: changelog, merge
+            changes, indexing, hydration. The merge-changes step is where "all changelog datasets from the changelog step
+            and any recent user edits coming from Actions are joined by the object type's primary key to merge all
+            changes"
+            (<a href="https://palantir.com/docs/foundry/object-indexing/funnel-batch-pipelines/">Funnel batch pipelines</a
+            >). That step doesn't change based on whether the trigger was a normal incremental update or a
+            <code>semantic_version</code> full rewrite — the freshly recomputed baseline still gets merged against the
+            same live edit queue by primary key. A hard reset doesn't blow away six months of Workshop edits by
+            mechanism; it recomputes the <em>baseline</em> those edits get layered onto, using the object type's
+            configured conflict-resolution strategy per property.
+          </p>
+
+          
+              </div></div></div>
+            </div>
+
+            <div class="p2-led__row">
+              <button type="button" class="p2-led__sum" aria-expanded="false" aria-controls="led-edits-3">
+                <span class="p2-led__n" aria-hidden="true">03</span>
+                <span class="p2-led__t">The primary key is the whole contract</span>
+                <span class="p2-led__h">Edit history won’t follow</span>
+                <span class="p2-led__ic" aria-hidden="true"></span>
+              </button>
+              <div class="p2-led__rule" aria-hidden="true"></div>
+              <div class="p2-led__wrap"><div class="p2-led__clip"><div class="p2-led__body" id="led-edits-3" role="region">
+          <p>
+            That merge is keyed strictly on primary key value, and the underlying risk isn't unique to Foundry: in a
+            lakehouse, changing how a table's join or primary key is generated is also a breaking change for every
+            downstream consumer's contract, since anything joining on that key silently stops matching. Foundry adds an
+            edit-specific consequence on top of that shared risk, worth separating by how well-documented each is:
+          </p>
+
+          <ul>
+            <li>
+              <b>Reassigning which property serves as the primary key</b> is a documented breaking schema change. On
+              Object Storage v1, "user edits cannot be migrated" through this change and are lost outright absent a
+              "time-consuming and complex manual intervention." On Object Storage v2, the schema migration framework
+              provides predefined migrations for other breaking changes, but "the framework does not support applying
+              migration instructions on the primary key property of object types" — Palantir does not document a
+              supported path for carrying edits through a primary-key reassignment
+              (<a href="https://www.palantir.com/docs/foundry/object-edits/schema-migrations">Manage schema changes</a>).
+            </li>
+            <li>
+              <b>Leaving the schema alone but changing how the existing primary-key column's values are computed</b> (new
+              hashing logic, a new surrogate-key sequence, a case-sensitivity fix) isn't a documented "schema change" —
+              this is inference from the PK-keyed identity model, not a quoted platform guarantee. The old key values
+              disappear from the datasource, which the default conflict strategy treats the same as a deleted row
+              (permanently, even if a matching row "reappears" later under the old key), and the new key values arrive as
+              brand-new objects with no edit history attached.
+            </li>
+          </ul>
+
+          
+              </div></div></div>
+            </div>
+          </div>
+
+          <div class="callout callout--warn">
+            <p class="callout__label">Stop-and-test signal</p>
+            <p>
+              If your remediation touches primary-key generation logic at all, treat that as a
+              stop-and-test-in-a-lower-environment signal — it's the one failure mode neither a backfill nor a hard reset
+              can recover from after the fact.
+            </p>
+          </div>
+
+          <h2 id="conflict"><span class="num">07</span>The conflict-resolution knob, precisely</h2>
+
+          <p>
+            Foundry lets you configure, per input datasource, how a property's pipeline-driven value is reconciled
+            against a standing user edit, in the object type's Datasources section in Ontology Manager
+            (<a
+              href="https://community.palantir.com/t/introducing-conflict-resolution-strategies-for-ontology-user-edits-and-datasource-updates-ga/346"
+              >Conflict resolution strategies</a
+            >). The second strategy has a trap in it that the table alone doesn't convey — so try it.
+          </p>
+
+          <figure class="panel reveal">
+            <div class="panel__head">
+              <div>
+                <p class="panel__title">Conflict resolution, simulated</p>
+                <p class="panel__hint">One row. One operator edit. One corrected pipeline run. Who wins?</p>
+              </div>
+            </div>
+            <div class="p2-sim">
+              <div class="p2-sim__controls">
+                <div class="p2-field">
+                  <span class="p2-field__label">Strategy</span>
+                  <div class="p2-seg" id="simStrategy">
+                    <button data-v="edits" class="is-on">Apply user edits <em>(default)</em></button>
+                    <button data-v="recent">Apply most recent value <em>(beta)</em></button>
+                  </div>
+                </div>
+                <div class="p2-field">
+                  <span class="p2-field__label">Does your fix advance the row's Timestamp property?</span>
+                  <div class="p2-seg" id="simBump">
+                    <button data-v="no" class="is-on">No — logic fix only</button>
+                    <button data-v="yes">Yes — timestamp advances</button>
+                  </div>
+                </div>
+                <div class="p2-field">
+                  <span class="p2-field__label">Property type</span>
+                  <div class="p2-seg" id="simProp">
+                    <button data-v="normal" class="is-on">Dataset-backed property</button>
+                    <button data-v="editonly">Edit-only property</button>
+                  </div>
+                </div>
+              </div>
+              <div class="p2-sim__stage">
+                <div class="p2-row" id="simRow"></div>
+                <div class="p2-outcome" id="simOutcome" data-w="edit"></div>
+              </div>
+            </div>
+            <figcaption class="p2-figcap">
+              <b>Apply most recent value</b> compares the edit's timestamp against a datasource property of type
+              <b>Timestamp</b> (not <b>Date</b>) on that same row — so the toggle only changes the outcome if your
+              corrected run actually advances that field.
+            </figcaption>
+          </figure>
+
+          <h3>Property ownership: what belongs to the pipeline vs. the Ontology</h3>
+
+          <p>
+            A related question an incident like this should provoke: should an operational application even be editing a
+            property the pipeline also writes? A normal, dataset-backed property is meant to originate from the pipeline,
+            with edits layered on top via the conflict-resolution strategy above. An <b>edit-only property</b>, by
+            contrast, has "no mapping to a column in the backing dataset" and exists for values "that will only be edited
+            through the ontology"
+            (<a href="https://www.palantir.com/docs/foundry/object-link-types/edit-only-properties">Edit-only properties</a
+            >) — and edits to it "always apply," regardless of conflict-resolution strategy or any Timestamp comparison
+            (<a href="https://www.palantir.com/docs/foundry/object-edits/how-edits-applied/">How user edits are applied</a
+            >).
+          </p>
+
+          <div class="p2-insight p2-insight--call">
+            <p class="p2-insight__label">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                <path d="M12 3v3M12 18v3M3 12h3M18 12h3M6.3 6.3l2.1 2.1M15.6 15.6l2.1 2.1M17.7 6.3l-2.1 2.1M8.4 15.6l-2.1 2.1" />
+              </svg>
+              Practitioner call
+            </p>
+            <p>
+              Practically: if a value is inherently operational — an assigned reviewer, a manually-set status flag — and
+              no pipeline will ever compute it, model it as edit-only, so a future backfill or hard reset can never touch
+              it in the first place. If a value is inherently pipeline-computed and an operator edit is meant as an
+              exception, not the norm, keep it a normal property under an explicit conflict-resolution strategy rather
+              than leaving the default unexamined.
+            </p>
+          </div>
+
+          <h2 id="reindex"><span class="num">08</span>How teams manage the reindex window</h2>
+
+          <p>
+            The mechanism here is documented; the duration isn't. <em>Hydration</em> — "downloading the index files from
+            the dataset into the disks of the OSv2 database search nodes" — is Palantir's own term for the final step of a
+            Funnel batch pipeline, but Palantir doesn't publish a duration figure for it
+            (<a href="https://palantir.com/docs/foundry/object-indexing/funnel-batch-pipelines/">Funnel batch pipelines</a
+            >). For the specific case where a full reindex also requires a <b>replacement pipeline</b> — which Palantir
+            documents today for object-type schema changes — the read-availability answer is explicit: "while the live
+            pipeline continues to run on its usual cadence, Funnel will orchestrate a replacement pipeline in the
+            background without impacting the live data being served to users," and only "after the replacement pipeline
+            successfully runs for the first time" does it take over (same source). That's a background build with an
+            atomic cutover, not a blackout window for readers.
+          </p>
+
+          <figure class="panel reveal">
+            <div class="panel__head">
+              <div>
+                <p class="panel__title">Four stages, two mechanisms — what readers and writers see</p>
+                <p class="panel__hint">Pick a mechanism, then step through the stages.</p>
+              </div>
+              <div class="panel__actions">
+                <button class="chip-btn is-active" data-mech="inplace" aria-pressed="true">in-place reindex</button>
+                <button class="chip-btn" data-mech="replacement" aria-pressed="false">replacement pipeline</button>
+              </div>
+            </div>
+            <div class="p2-stages">
+              <div class="p2-stages__track" id="stageTrack"></div>
+              <div class="p2-rw">
+                <div class="p2-rw__box" id="stageReads" data-s="ok"></div>
+                <div class="p2-rw__box" id="stageWrites" data-s="ok"></div>
+              </div>
+            </div>
+            <figcaption class="p2-figcap" id="stageCap"></figcaption>
+          </figure>
+
+          <p>
+            Two separate guarantees are at play here, from two different pages. Funnel's replacement-pipeline behavior,
+            above, is about read continuity — queries keep working while the rebuild happens in the background.
+            Separately, Palantir's edit-consistency guarantee states that "if an object read occurring as part of an
+            ontology query happens after a user modification is sent, the object read is guaranteed to contain the user
+            edits" — with no stated exception for a rebuild window.
+          </p>
+
+          <div class="p2-insight p2-insight--test p2-insight--fold" data-fold>
+            <button type="button" class="p2-insight__sum" aria-expanded="false" aria-controls="note-reindex">
+              <span class="p2-insight__label">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
+                  <path d="M9 3h6M10 3v5.5L5 19a2 2 0 0 0 1.8 2.9h10.4A2 2 0 0 0 19 19l-5-10.5V3" />
+                </svg>
+                Field test
+              </span>
+              <span class="p2-insight__teaser"
+                >A <code>semantic_version</code> bump, reindexed in-place</span
+              >
+              <span class="p2-insight__ic" aria-hidden="true"></span>
+            </button>
+            <div class="p2-insight__wrap">
+              <div class="p2-insight__clip">
+                <div class="p2-insight__body" id="note-reindex" role="region" aria-label="Field test detail">
+                  <p>
+                    One environment, one object type: a <code>semantic_version</code> bump reindexed the live pipeline
+                    in-place rather than provisioning a replacement pipeline. Reads kept returning pre-bump values for
+                    the entire changelog-to-hydration cycle — no errors, no downtime, just pre-bump counts until the
+                    process finished. Separately, edits submitted mid-cycle (during indexing and during hydration) were
+                    reflected immediately in SQL Console, consistent with Palantir's documented edit-consistency
+                    guarantee, which states no exception for a rebuild window
+                    (<a href="https://www.palantir.com/docs/foundry/object-edits/how-edits-applied/"
+                      >How user edits are applied</a
+                    >). Neither page documents the mechanism behind that — whether writes land on the still-live old
+                    index while queued edits apply on top until cutover — but the outcome held. One data point, not a
+                    guarantee it generalizes; validate in a lower environment for your own object types.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <p>
+            Funnel's documented performance heuristic can automatically provision a replacement pipeline "for performance
+            reasons based on various heuristics" Palantir doesn't enumerate, so a different object type, data volume, or
+            Foundry instance could fall on the other side of that same heuristic and behave differently. Validate the
+            reindex window for your own object types in a lower environment rather than assuming this result generalizes.
+          </p>
+
+          <h3>Which trigger routes to which mechanism</h3>
+
+          <figure class="panel reveal">
+            <div class="panel__head">
+              <div>
+                <p class="panel__title">Reindex triggers</p>
+                <p class="panel__hint">Select a trigger column to isolate its row.</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="p2-matrix" id="triggerMatrix">
+                <thead>
+                  <tr>
+                    <th scope="col" style="cursor: default"></th>
+                    <th scope="col" data-col="0"><code>semantic_version</code> bump</th>
+                    <th scope="col" data-col="1">&gt;80% rows changed</th>
+                    <th scope="col" data-col="2">Schema change</th>
+                    <th scope="col" data-col="3">Manual (Ontology Manager)</th>
+                    <th scope="col" data-col="4">Performance heuristics</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row">Full reindex (in-place)</th>
+                    <td data-col="0"><span class="p2-mark p2-mark--test">✓</span></td>
+                    <td data-col="1"><span class="p2-mark">✓</span></td>
+                    <td data-col="2"><em>—</em></td>
+                    <td data-col="3"><em>—</em></td>
+                    <td data-col="4"><em>—</em></td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Replacement pipeline</th>
+                    <td data-col="0"><em>—</em></td>
+                    <td data-col="1"><em>—</em></td>
+                    <td data-col="2"><span class="p2-mark">✓</span></td>
+                    <td data-col="3"><span class="p2-mark p2-mark--test">✓</span></td>
+                    <td data-col="4"><span class="p2-mark">✓</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <figcaption class="p2-figcap" id="matrixCap">
+              Teal marks are field-observed rather than documented. Select a column for the detail.
+            </figcaption>
+          </figure>
+
+          <div class="p2-insight p2-insight--test p2-insight--fold" data-fold>
+            <button type="button" class="p2-insight__sum" aria-expanded="false" aria-controls="note-reindex">
+              <span class="p2-insight__label">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
+                  <path d="M9 3h6M10 3v5.5L5 19a2 2 0 0 0 1.8 2.9h10.4A2 2 0 0 0 19 19l-5-10.5V3" />
+                </svg>
+                Field test
+              </span>
+              <span class="p2-insight__teaser"
+                >Manual trigger mechanism</span
+              >
+              <span class="p2-insight__ic" aria-hidden="true"></span>
+            </button>
+            <div class="p2-insight__wrap">
+              <div class="p2-insight__clip">
+                <div class="p2-insight__body" id="note-reindex" role="region" aria-label="Field test detail">
+                  <p>
+                    Palantir's documentation doesn't specify which mechanism a manual trigger uses. Testing in one Foundry
+                    instance observed a replacement pipeline being provisioned, with the object type remaining queryable via
+                    SQL Console throughout — consistent with the documented replacement-pipeline read-continuity guarantee,
+                    though replacement pipeline not confirmed as universal behavior across Foundry versions or configurations.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <h2 id="writes"><span class="num">09</span>A note on concurrent writes during long rebuilds</h2>
+
+          <p>
+            One more caveat worth flagging: the "no impact on live data" language above is specifically about
+            <em>reads</em> continuing to serve from the still-live pipeline during the background build. Neither this
+            page nor any other Palantir page states what happens to concurrent <em>writes</em> — Actions/user edits —
+            while a replacement pipeline is running in the background. That's not a documented guarantee either way.
+          </p>
+
+          <p>
+            A relevant real-world account comes from a
+            <a href="https://community.palantir.com/t/ontology-replacement-pipeline-mechanics/6570"
+              >developer forum thread on replacement pipeline mechanics</a
+            >, where a practitioner reports a replacement pipeline that "takes around 10-12 hours to run fully" for a
+            streaming-backed object — confirming these windows can run well past a single working session, not minutes.
+          </p>
+
+          <p>
+            Mechanically, the replacement pipeline almost certainly incorporates the edit queue's contents at some point
+            via its own Merge changes step — Palantir documents that "any recent user edits coming from Actions" get
+            joined into the merge changes dataset as a step every Funnel batch pipeline runs through, and a replacement
+            pipeline is described as "an entirely new Funnel pipeline"
+            (<a href="https://palantir.com/docs/foundry/object-indexing/funnel-batch-pipelines/">Funnel batch pipelines</a
+            >).
+          </p>
+
+          <p>
+            What's not clear is whether it stays continuously in sync with new writes throughout that 10-12 hour build,
+            right up to cutover, or whether it merges once early on and leaves later edits to be picked up in a
+            subsequent cycle. Recall from Part 1 that Funnel's edit queue flushes on a six-hour cadence; a replacement
+            pipeline running longer than six hours raises the question of whether it gets its own independent catch-up
+            cycle, or whether the queue simply won't flush against it until it catches up.
+          </p>
+
+          <div class="p2-insight p2-insight--hyp">
+            <p class="p2-insight__label">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                <path d="M12 3a6 6 0 0 1 6 6c0 2.4-1.6 3.7-2.4 5.2-.4.8-.6 1.6-.6 2.3H9c0-.7-.2-1.5-.6-2.3C7.6 12.7 6 11.4 6 9a6 6 0 0 1 6-6zM10 21h4" />
+              </svg>
+              Working hypothesis
+            </p>
+            <p>
+              Since Funnel's edit queue already uses offset tracking, it's plausible the replacement pipeline tracks its
+              own offset and Funnel holds off flushing until it catches up — but that's bordering on speculation;
+              Palantir's docs don't describe this mechanism for replacement pipelines specifically.
+            </p>
+          </div>
+
+          <p>
+            This is exactly the kind of gap that can turn into a real production incident. One documented case shows both
+            the live and replacement pipelines getting stuck in failure-backoff states simultaneously, requiring manual
+            intervention to resolve
+            (<a href="https://community.palantir.com/t/limits-on-vector-embeddings-in-ontology/6023/6"
+              >Limits on vector embeddings in Ontology</a
+            >) — a concrete example of what can go wrong when a replacement pipeline doesn't complete cleanly (in that
+            case, due to compute resource limits rather than write volume, but the failure mode — two pipelines stuck,
+            needing intervention — illustrates the risk).
+          </p>
+
+          <div class="p2-insight p2-insight--call">
+            <p class="p2-insight__label">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                <path d="M12 3v3M12 18v3M3 12h3M18 12h3M6.3 6.3l2.1 2.1M15.6 15.6l2.1 2.1M17.7 6.3l-2.1 2.1M8.4 15.6l-2.1 2.1" />
+              </svg>
+              Practitioner call
+            </p>
+            <p>
+              Because the exact mechanics of this catch-up phase aren't published, multi-hour replacement pipelines carry
+              an unquantified risk of catch-up stalls or failure-backoff loops if write velocity is high during the
+              build. A reasonable mitigation is validating long rebuild windows empirically, or scheduling
+              schema-change-driven rebuilds during low-write or no-write operational windows.
+            </p>
+          </div>
+
+          <p>
+            And that's before accounting for the schema-change case specifically: the same developer forum thread that
+            confirmed the 10-12 hour build window also reported that after the schema change went live, "a number of OSDK
+            based apps failing since they couldn't load the objects" because deleted properties were no longer queryable
+            — a concrete instance of a hard reset via schema change breaking consuming applications during exactly this
+            kind of extended reindex
+            (<a href="https://community.palantir.com/t/ontology-replacement-pipeline-mechanics/6570"
+              >Ontology replacement pipeline mechanics</a
+            >).
+          </p>
+
+          <h2 id="rung3"><span class="num">10</span>Rung 3 — if it's a value break: how big is the affected slice?</h2>
+
+          <p>
+            This is where the two backfill patterns diverge, and the choice is really about ownership and scale, not
+            correctness — both are correct.
+          </p>
+
+          <figure class="panel reveal" id="bfFig">
+            <div class="panel__head">
+              <div>
+                <p class="panel__title">Two backfill patterns, side by side</p>
+                <p class="panel__hint">Step through each pattern's run to see what it reads and what it writes.</p>
+              </div>
+              <div class="panel__actions">
+                <button class="chip-btn is-active" data-backfill="a" aria-pressed="true">A · auxiliary replay</button>
+                <button class="chip-btn" data-backfill="b" aria-pressed="false">B · hash-diff CDC</button>
+              </div>
+            </div>
+            <div class="p2-grid2" style="margin-bottom: var(--space-5)">
+              <div class="p2-card" id="bfScope"></div>
+              <div class="p2-card" id="bfCompute"></div>
+            </div>
+            <div class="p2-flow" id="bfFlow"></div>
+            <div class="p2-controls" style="margin-top: var(--space-5); margin-bottom: 0">
+              <button class="chip-btn" id="bfPlay">run the pipeline</button>
+              <span class="p2-tag" id="bfStatus">idle</span>
+            </div>
+          </figure>
+
+          <h3 id="optA">Option A: the auxiliary replay dataset</h3>
+
+          <p>
+            Build a permanent secondary input — the auxiliary replay dataset — alongside the main pipeline. When a bug is
+            found, deploy the fixed code, then append the three weeks of original raw (uncorrupted-at-source) records
+            into the auxiliary dataset. Because both inputs are read in <code>added</code> mode, the pipeline unions the
+            auxiliary dataset's new rows with the day's normal delta, runs both through the now-fixed logic, and appends
+            the corrected results to the output. On the next run, the auxiliary dataset's <code>added</code> view is
+            empty again — no truncate, no rollback, no lingering special-case code path.
+          </p>
+
+          <p>Two constraints, both enforced by Object Storage v2's sync semantics rather than style preference:</p>
+
+          <ul>
+            <li>
+              <b>The auxiliary replay dataset must always receive <code>APPEND</code> transactions, never a
+              <code>SNAPSHOT</code>.</b>
+              A <code>SNAPSHOT</code> load fully rewrites the auxiliary dataset's contents, which breaks the main
+              transform's ability to run incrementally on that input at all — the exact fate this pattern exists to
+              avoid.
+            </li>
+            <li>
+              <b>You must deduplicate to one row per primary key before the write</b> if the replay window overlaps
+              today's normal delta. OSv2 requires that "each transaction must contain, at most, one row per primary key,"
+              using a "most recent transaction wins" rule
+              (<a href="https://palantir.com/docs/foundry/object-indexing/funnel-batch-pipelines/"
+                >Funnel batch pipelines</a
+              >).
+            </li>
+          </ul>
+
+          <div class="callout callout--rule">
+            <p class="callout__label">The dedup gotcha</p>
+            <p>
+              Order the ranking window by the source's business/event timestamp (e.g. <code>updated_at</code>) — never by
+              a runtime timestamp such as <code>current_timestamp()</code>. The auxiliary dataset's replayed rows carry an
+              old business timestamp from three weeks ago; a runtime timestamp would instead reflect
+              <em>when the replay job happened to run</em>, which could make a three-week-old replayed value look newer
+              than today's genuine update and win the rank arbitrarily.
+            </p>
+          </div>
+
+          <div class="codeblock">
+            <div class="codeblock__head">
+              <span class="codeblock__lang">python</span>
+              <span class="codeblock__file">transforms/orders_replay.py</span>
+              <button class="copy-btn" data-copy="code-replay">copy</button>
+            </div>
+            <pre><code id="code-replay"><span class="t-kw">from</span> transforms.api <span class="t-kw">import</span> transform, incremental, Input, Output
+<span class="t-kw">from</span> pyspark.sql <span class="t-kw">import</span> Window
+<span class="t-kw">import</span> pyspark.sql.functions <span class="t-kw">as</span> F
+
+<span class="t-dec">@incremental</span>()
+<span class="t-dec">@transform</span>(
+    main_input=<span class="t-cls">Input</span>(<span class="t-str">"/Enterprise/Landing/Raw/orders_landing_stream"</span>),
+    replay_input=<span class="t-cls">Input</span>(<span class="t-str">"/Enterprise/Operations/ReplayDatasets/orders_replay_aux"</span>),
+    processed_output=<span class="t-cls">Output</span>(<span class="t-str">"/Enterprise/Ontology/Backing/orders_clean"</span>),
+)
+<span class="t-kw">def</span> <span class="t-fn">compute_orders</span>(main_input, replay_input, processed_output):
+    normal_delta_df = main_input.dataframe(<span class="t-str">'added'</span>)
+    replay_delta_df = replay_input.dataframe(<span class="t-str">'added'</span>)
+    combined_raw_df = normal_delta_df.unionByName(replay_delta_df)
+    transformed_df = apply_fixed_business_logic(combined_raw_df)
+
+    <span class="t-com"># Mandatory OSv2 rule: at most one row per primary key per transaction.</span>
+    <span class="t-com"># Order by source business timestamp, not runtime, so today's real update wins.</span>
+    window_spec = <span class="t-cls">Window</span>.partitionBy(<span class="t-str">"order_id"</span>).orderBy(F.col(<span class="t-str">"source_event_time"</span>).desc())
+    deduped_output_df = (
+        transformed_df
+        .withColumn(<span class="t-str">"row_rank"</span>, F.row_number().over(window_spec))
+        .filter(F.col(<span class="t-str">"row_rank"</span>) == <span class="t-num">1</span>)
+        .drop(<span class="t-str">"row_rank"</span>)
+    )
+    processed_output.write_dataframe(deduped_output_df)</code></pre>
+          </div>
+
+          <h3 id="optB">Option B: hash-diff CDC (self-healing backfill)</h3>
+
+          <p>
+            Load the full snapshot of source data every run, apply the current transformation to every row, hash the
+            resulting payload, and compare it against a deduplicated view of the previous output. When a code fix changes
+            a row's hash, the pipeline detects the discrepancy on its own and emits the delta as an <code>APPEND</code>.
+            This is genuinely idempotent — running it twice against unchanged inputs and code produces an empty delta
+            both times — and it requires no manual replay injection; it will catch the <em>next</em> silent regression
+            too, not just this one.
+          </p>
+
+          <p>
+            The cost is compute: every row in the source is recomputed on every run before the delta is even calculated.
+            There's also a specific join-mechanics trap worth seeing rather than reading about.
+          </p>
+
+          <figure class="panel reveal">
+            <div class="panel__head">
+              <div>
+                <p class="panel__title">Why <code>previous</code> must be deduplicated first</p>
+                <p class="panel__hint">
+                  The source system emits a record every time an order changes, so the <em>dataset</em> holds one row
+                  per revision of <code>order_1</code> — not one row per order. Rank those down to the latest row per
+                  key before comparing, or each current row is diffed against every prior version of itself.
+                </p>
+              </div>
+            </div>
+            <div class="p2-fan">
+              <div class="p2-fan__col">
+                <h5>Joining raw <code>previous</code> — fan-out</h5>
+                <div class="p2-fan__rows">
+                  <span class="p2-fan__r">current: order_1 · hash=a91</span>
+                  <span class="p2-fan__r p2-fan__r--dup">× previous: order_1 · hash=a91 (t-3)</span>
+                  <span class="p2-fan__r p2-fan__r--dup">× previous: order_1 · hash=7c2 (t-2)</span>
+                  <span class="p2-fan__r p2-fan__r--dup">× previous: order_1 · hash=e04 (t-1)</span>
+                  <span class="p2-fan__r p2-fan__r--dup">= 3 comparison rows for 1 key</span>
+                </div>
+              </div>
+              <div class="p2-fan__col">
+                <h5>Ranking <code>previous</code> first — one-to-one</h5>
+                <div class="p2-fan__rows">
+                  <span class="p2-fan__r">current: order_1 · hash=a91</span>
+                  <span class="p2-fan__r">previous rank 3: hash=a91 (t-3)</span>
+                  <span class="p2-fan__r">previous rank 2: hash=7c2 (t-2)</span>
+                  <span class="p2-fan__r p2-fan__r--keep">previous rank 1: hash=e04 (t-1) ← kept</span>
+                  <span class="p2-fan__r p2-fan__r--keep">= 1 comparison row for 1 key</span>
+                </div>
+              </div>
+            </div>
+            <figcaption class="p2-figcap">
+              Deduplicate <code>previous</code> down to one row per primary key (latest by business timestamp) with a
+              ranking window function <em>before</em> the join, so each current row is compared against exactly one prior
+              state.
+            </figcaption>
+          </figure>
+
+          <div class="codeblock">
+            <div class="codeblock__head">
+              <span class="codeblock__lang">python</span>
+              <span class="codeblock__file">transforms/orders_cdc.py</span>
+              <button class="copy-btn" data-copy="code-cdc">copy</button>
+            </div>
+            <pre><code id="code-cdc"><span class="t-kw">from</span> transforms.api <span class="t-kw">import</span> transform, incremental, Input, Output
+<span class="t-kw">from</span> pyspark.sql <span class="t-kw">import</span> Window
+<span class="t-kw">import</span> pyspark.sql.functions <span class="t-kw">as</span> F
+
+<span class="t-dec">@incremental</span>()
+<span class="t-dec">@transform</span>(
+    raw_snapshot=<span class="t-cls">Input</span>(<span class="t-str">"/Enterprise/Landing/Raw/orders_snapshot"</span>),
+    processed_output=<span class="t-cls">Output</span>(<span class="t-str">"/Enterprise/Ontology/Backing/orders_clean"</span>),
+)
+<span class="t-kw">def</span> <span class="t-fn">compute_orders_cdc</span>(raw_snapshot, processed_output):
+    current_df = apply_fixed_business_logic(raw_snapshot.dataframe())
+    payload_cols = [c <span class="t-kw">for</span> c <span class="t-kw">in</span> current_df.columns <span class="t-kw">if</span> c <span class="t-kw">not in</span> (<span class="t-str">"order_id"</span>, <span class="t-str">"source_event_time"</span>)]
+    <span class="t-com"># sha2 over a 32-bit hash reduces collision risk at high row counts</span>
+    current_state_df = current_df.withColumn(
+        <span class="t-str">"row_hash"</span>, F.sha2(F.concat_ws(<span class="t-str">"||"</span>, *payload_cols), <span class="t-num">256</span>)
+    )
+
+    raw_previous_df = processed_output.dataframe(<span class="t-str">'previous'</span>, schema=current_state_df.schema)
+    window_spec = <span class="t-cls">Window</span>.partitionBy(<span class="t-str">"order_id"</span>).orderBy(F.col(<span class="t-str">"source_event_time"</span>).desc())
+    latest_previous_df = (
+        raw_previous_df
+        .withColumn(<span class="t-str">"row_rank"</span>, F.row_number().over(window_spec))
+        .filter(F.col(<span class="t-str">"row_rank"</span>) == <span class="t-num">1</span>)
+        .select(<span class="t-str">"order_id"</span>, F.col(<span class="t-str">"row_hash"</span>).alias(<span class="t-str">"prev_hash"</span>))
+    )
+
+    diff_df = current_state_df.join(latest_previous_df, on=<span class="t-str">"order_id"</span>, how=<span class="t-str">"left"</span>)
+    delta_df = diff_df.filter(
+        F.col(<span class="t-str">"prev_hash"</span>).isNull() | (F.col(<span class="t-str">"row_hash"</span>) != F.col(<span class="t-str">"prev_hash"</span>))
+    ).drop(<span class="t-str">"prev_hash"</span>)
+    processed_output.write_dataframe(delta_df)</code></pre>
+          </div>
+
+          <h2 id="rung4"><span class="num">11</span>Rung 4 — when is a literal rollback actually justified?</h2>
+
+          <p>
+            Sometimes the entire output for a window needs to disappear, not be corrected.
+            Foundry's dataset rollback exists for this. Used within its documented limits, it is a legitimate remediation
+            tool. Drag the rollback point below to see what it does and doesn't revert.
+          </p>
+
+          <figure class="panel reveal">
+            <div class="panel__head">
+              <div>
+                <p class="panel__title">Rollback, and what the next build does</p>
+                <p class="panel__hint">
+                  Rollback targets the output dataset only. Sources keep every transaction.
+                </p>
+              </div>
+            </div>
+            <div class="p2-tl">
+              <div class="p2-tl__lane">
+                <div class="p2-tl__head">
+                  <span class="p2-tl__name">Source dataset — untouched by rollback</span>
+                  <span class="p2-tl__note">still holds every day of data through today</span>
+                </div>
+                <div class="p2-tl__dots" id="tlSource"></div>
+              </div>
+              <div class="p2-tl__lane">
+                <div class="p2-tl__head">
+                  <span class="p2-tl__name">Output dataset — rollback target</span>
+                  <span class="p2-tl__note" id="tlNote"></span>
+                </div>
+                <div class="p2-tl__dots" id="tlTarget"></div>
+                <div class="p2-slider__row">
+                  <label class="p2-controls__label" for="tlRange">roll back to</label>
+                  <input id="tlRange" type="range" min="1" max="12" value="12" step="1" />
+                  <span class="p2-slider__val" id="tlVal">t12</span>
+                </div>
+              </div>
+              <div class="p2-outcome" id="tlOutcome" data-w="edit"></div>
+            </div>
+          </figure>
+
+          <ul>
+            <li>
+              <b>Rollback does not, by itself, reset incremental state or force a snapshot.</b> Palantir states plainly
+              that "if the dataset is being built incrementally, the dataset rollback feature also ensures that the
+              incrementality of your dataset is preserved"
+              (<a href="https://palantir.com/docs/foundry/data-lineage/dataset-rollback/">Roll back a dataset</a>).
+              Forcing a snapshot is a separate, deliberately chosen action in the same tool — not a side effect of rolling
+              back.
+            </li>
+            <li>
+              <b>The real cost is on the Ontology side, and it's manual, not automatic.</b> The same page states: "If a
+              dataset backs an object type stored using Object Storage v2, manual intervention is required to ensure that
+              the object type is reindexed with a successful run of the replacement pipeline to reflect the state after
+              the rollback."
+            </li>
+            <li>
+              <b>It has real limits.</b> You can only roll back to a successful transaction, not one removed by a
+              retention policy; rollback doesn't revert logic changes if the code changed since that transaction; and
+              pipeline-level rollback is in planned deprecation, capped at 50 transactions, in favor of per-dataset
+              rollback.
+            </li>
+          </ul>
+
+          <p>
+            Rollback is the right call when the output itself should never have existed — e.g., an errant job wrote to the
+            wrong branch — not when the output is directionally right but numerically wrong on a subset of rows. For the
+            latter, a backfill leaves the operational loop running; a rollback plus manual reindex does not.
+          </p>
+
+          <p>
+            Does the next build have to re-fetch everything from the source? No. Rollback only reverts the
+            <em>output</em> dataset you targeted — Palantir describes it as updating "the data and job history of a
+            dataset," not its inputs. Your upstream sources are untouched, so the next scheduled incremental run reads
+            <code>previous</code> as the rolled-back state and reprocesses the input rows added since that point. One
+            caveat Palantir states plainly: "the logic backing the dataset will be left unchanged and will need to be
+            updated in order to apply to the next build"
+            (<a href="https://palantir.com/docs/foundry/data-lineage/dataset-rollback/">Roll back a dataset</a>) —
+            rollback reverts data, not code.
+          </p>
+
+          <h2 id="sidebyside"><span class="num">12</span>Side by side: lakehouse vs. Foundry remediation</h2>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col"></th>
+                  <th scope="col">Traditional lakehouse</th>
+                  <th scope="col">Palantir Foundry</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Primary remediation</th>
+                  <td>Rollback &amp; recompute (<code>INSERT OVERWRITE</code> / new snapshot)</td>
+                  <td>Decision ladder: semantic reset, auxiliary replay, hash-diff CDC, or scoped rollback</td>
+                </tr>
+                <tr>
+                  <th scope="row">Diagnosis</th>
+                  <td>Query old table versions / time travel on Iceberg-Delta</td>
+                  <td>Time Travel + Bisect in Dataset Preview (beta)</td>
+                </tr>
+                <tr>
+                  <th scope="row">Full-recompute trigger</th>
+                  <td>Whenever you choose to run it</td>
+                  <td>
+                    <code>semantic_version</code> bump, schema changes, or any change crossing Funnel's default
+                    80%-of-rows-changed threshold
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Downstream impact of a full rewrite</th>
+                  <td>Momentary dashboard staleness</td>
+                  <td>Ontology reindex/hydration window of undocumented duration — validate empirically</td>
+                </tr>
+                <tr>
+                  <th scope="row">User edits during remediation</th>
+                  <td>Not applicable — dashboards are read-only</td>
+                  <td>Primary key is the contract; conflict resolution per datasource, explicitly set</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <section class="sources" id="sources">
+            <h2>Sources</h2>
+            <ol>
+              <li>
+                <a href="https://palantir.com/docs/foundry/data-lineage/dataset-rollback/" target="_blank" rel="noopener">Roll back a dataset</a> —
+                Palantir Foundry docs
+              </li>
+              <li>
+                <a href="https://palantir.com/docs/foundry/data-lineage/pipeline-rollback/" target="_blank" rel="noopener"
+                  >Roll back a pipeline (planned deprecation)</a
+                >
+                — Palantir Foundry docs
+              </li>
+              <li>
+                <a href="https://www.palantir.com/docs/foundry/dataset-preview/time-travel" target="_blank" rel="noopener">Time Travel (beta)</a>,
+                Dataset Preview — Palantir Foundry docs
+              </li>
+              <li>
+                <a href="https://palantir.com/docs/foundry/transforms-python/incremental-usage/" target="_blank" rel="noopener"
+                  >Incremental transforms — usage guide (Python)</a
+                >
+                — Palantir Foundry docs
+              </li>
+              <li>
+                <a href="https://palantir.com/docs/foundry/transforms-python-spark/incremental-examples/" target="_blank" rel="noopener"
+                  >Incremental transforms — examples (Python/Spark)</a
+                >
+                — Palantir Foundry docs
+              </li>
+              <li>
+                <a href="https://palantir.com/docs/foundry/object-indexing/funnel-batch-pipelines/" target="_blank" rel="noopener"
+                  >Funnel batch pipelines — indexing</a
+                >
+                — Palantir Foundry docs
+              </li>
+              <li>
+                <a href="https://www.palantir.com/docs/foundry/object-edits/how-edits-applied/" target="_blank" rel="noopener"
+                  >How user edits are applied</a
+                >
+                — Palantir Foundry docs
+              </li>
+              <li>
+                <a href="https://www.palantir.com/docs/foundry/object-edits/schema-migrations" target="_blank" rel="noopener">Manage schema changes</a>
+                — Palantir Foundry docs
+              </li>
+              <li>
+                <a
+                  href="https://community.palantir.com/t/introducing-conflict-resolution-strategies-for-ontology-user-edits-and-datasource-updates-ga/346" target="_blank" rel="noopener"
+                  >Conflict resolution strategies for Ontology user edits and datasource updates (GA)</a
+                >
+                — Palantir Community
+              </li>
+              <li>
+                <a href="https://www.palantir.com/docs/foundry/object-link-types/edit-only-properties" target="_blank" rel="noopener"
+                  >Edit-only properties</a
+                >
+                — Palantir Foundry docs
+              </li>
+              <li>
+                <a href="https://community.palantir.com/t/ontology-replacement-pipeline-mechanics/6570" target="_blank" rel="noopener"
+                  >Ontology replacement pipeline mechanics</a
+                >
+                — Palantir Community
+              </li>
+              <li>
+                <a href="https://community.palantir.com/t/limits-on-vector-embeddings-in-ontology/6023/6" target="_blank" rel="noopener"
+                  >Limits on vector embeddings in Ontology</a
+                >
+                — Palantir Community
+              </li>
+            </ol>
+          </section>
+
+          <div class="p2-prevnext">
+            <a class="p2-partcard" href="../index.html">
+              <p class="p2-partcard__k">← Part 1</p>
+              <h3>The Mental Model Shift: From Lakehouse to Operational Platform</h3>
+              <p>Datasets vs. the Ontology, idiomatic incremental transforms, and how Action writebacks persist.</p>
+            </a>
+            <span class="p2-partcard p2-partcard--soon">
+              <p class="p2-partcard__k">Part 3 · in progress</p>
+              <h3>Coming next</h3>
+              <p>The third instalment continues the series. Not yet published.</p>
+            </span>
+          </div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer__inner">
+        <p class="footer__legal">
+          Palantir, Foundry, Workshop, and AIP are trademarks of Palantir Technologies Inc.
+        </p>
+        <p class="footer__legal">
+          This blog is independent and is not affiliated with, endorsed by, or sponsored by Palantir Technologies Inc.
+        </p>        
+
+        <p class="footer__privacy">
+          <span class="footer__privacy-label">Privacy note</span>
+          This site uses cookieless, privacy-preserving Cloudflare Web Analytics to understand
+          aggregate traffic trends. It does not use tracking cookies, local storage, or cross-site
+          visitor tracking.
+        </p>
+
+        <p class="footer__feedback">
+        <span class="footer__feedback-label">Discussion</span>
+          <a
+            href="https://github.com/enterprisescale/enterprisescale.github.io/discussions/1"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Open GitHub Discussions for feedback in a new tab"
+          >
+            Questions, concerns, or feedback via GitHub Discussions
+            <span class="footer__external" aria-hidden="true">↗</span>
+          </a>
+        </p>
+      </div>
+    </footer>
+
+    <div class="p2-rdr" id="p2Rdr" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="p2RdrTitle">
+      <div class="p2-rdr__bar">
+        <div class="p2-rdr__barin">
+          <div class="p2-rdr__rail" id="p2RdrRail"></div>
+        </div>
+        <button type="button" class="p2-rdr__close" id="p2RdrClose" aria-label="Close and return to the decision ladder">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
+            <path d="M5 5l14 14M19 5L5 19" />
+          </svg>
+        </button>
+      </div>
+      <div class="p2-rdr__scroll" id="p2RdrScroll" tabindex="-1">
+        <div class="p2-rdr__col">
+          <p class="p2-rdr__eyebrow" id="p2RdrEyebrow"></p>
+          <h2 class="p2-rdr__title" id="p2RdrTitle"></h2>
+          <div class="p2-rdr__body" id="p2RdrBody"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cloudflare Web Analytics -->
+    <script type='module' 
+      src='https://static.cloudflareinsights.com/beacon.min.js' 
+      data-cf-beacon='{"token": "e70d9803a3084641adefa514cc838363"}'>
+    </script>
+    <!-- End Cloudflare Web Analytics -->
+
+    <script src="../core.js"></script>
+    <script src="part-2.js"></script>
+
+  </body>
+</html>
