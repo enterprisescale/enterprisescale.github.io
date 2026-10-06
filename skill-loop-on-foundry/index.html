@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>A Skill Loop for Foundry, One Component at a Time — Foundry Field Notes</title>
+    <meta
+      name="description"
+      content="Twelve components, eight steps, each added in response to a specific incident or constraint. How a Google Research paper on skill evolution (WikiSkill) was adapted into a governed build loop on Palantir Foundry."
+    />
+    <link rel="canonical" href="https://enterprisescale.github.io/skill-loop-on-foundry/" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Foundry Field Notes" />
+    <meta property="og:url" content="https://enterprisescale.github.io/skill-loop-on-foundry/" />
+    <meta property="og:title" content="A Skill Loop for Foundry, One Component at a Time" />
+    <meta
+      property="og:description"
+      content="From the WikiSkill paper to a governed build loop on Palantir Foundry: an animated walk through the components and connections, in the order they were added."
+    />
+    <meta property="og:image" content="https://enterprisescale.github.io/skill-loop-on-foundry/og-image.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="627" />
+    <meta
+      property="og:image:alt"
+      content="Twelve boxes in two bands, a build loop and a learn loop, connected by arrows; the title A Skill Loop for Foundry, One Component at a Time"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="A Skill Loop for Foundry, One Component at a Time" />
+    <meta
+      name="twitter:description"
+      content="From the WikiSkill paper to a governed build loop on Palantir Foundry: an animated walk through the components and connections, in the order they were added."
+    />
+    <meta name="twitter:image" content="https://enterprisescale.github.io/skill-loop-on-foundry/og-image.jpg" />
+    <meta
+      name="twitter:image:alt"
+      content="Twelve boxes in two bands, a build loop and a learn loop, connected by arrows; the title A Skill Loop for Foundry, One Component at a Time"
+    />
+    <link rel="preload" href="../fonts/Inter-Variable.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="../fonts/SpaceGrotesk-Variable.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="../fonts.css" />
+    <link rel="stylesheet" href="../style.css" />
+    <link rel="stylesheet" href="skill-loop.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='4' y='4' width='24' height='9' rx='2.5' fill='none' stroke='%230b57c9' stroke-width='2.5'/%3E%3Crect x='4' y='19' width='24' height='9' rx='2.5' fill='none' stroke='%230d6f72' stroke-width='2.5'/%3E%3Cpath d='M22 13v6' stroke='%239a5b06' stroke-width='2.5'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body id="top">
+    <div class="progress" id="progress" aria-hidden="true"></div>
+
+    <header class="header">
+      <div class="header__inner">
+        <a class="brand" href="../" aria-label="Foundry Field Notes — home">
+          <svg width="30" height="30" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <rect x="3.5" y="4" width="25" height="8.5" rx="2.5" stroke="currentColor" stroke-width="2" />
+            <rect x="3.5" y="19.5" width="25" height="8.5" rx="2.5" stroke="currentColor" stroke-width="2" opacity="0.55" />
+            <path d="M9 12.5v7" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            <path d="M23 19.5v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="2.6 2.6" />
+          </svg>
+          <span class="brand__name">
+            Foundry Field Notes
+            <span class="brand__sub">Engineering the operational layer</span>
+          </span>
+        </a>
+        <span class="header__spacer"></span>
+        <span class="header__series">FIELD NOTE</span>
+        <button class="icon-btn" data-theme-toggle aria-label="Switch to dark mode">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <section class="hero">
+        <p class="eyebrow">Palantir Foundry · AI FDE · Agent skills</p>
+        <h1>A Skill Loop for Foundry, One Component at a Time</h1>
+        <p class="hero__deck">
+          Twelve components, built one at a time, each one added because something went wrong or something was not
+          allowed. The starting point is a Google Research paper that runs tasks to improve an agent's skills. I turned
+          it around to run agents that improve a code base, inside a platform where production is off limits. This is
+          the shape the loop ended up with, and where it departs from the paper.
+        </p>
+      </section>
+
+      <div class="layout">
+        <aside class="toc" aria-label="On this page">
+          <p class="toc__title">On this page</p>
+          <ol>
+            <li><a href="#play">The loop, as a play</a></li>
+            <li><a href="#paper">The paper's loop</a></li>
+            <li><a href="#inversion">The inversion</a></li>
+            <li><a href="#incidents">Four incidents</a></li>
+            <li><a href="#orchestrator">One plan, one approval</a></li>
+            <li><a href="#contract">Ask before building</a></li>
+            <li><a href="#versions">Versions everywhere</a></li>
+            <li><a href="#reattach">The paper, reattached</a></li>
+            <li><a href="#status">Where it stands</a></li>
+            <li><a href="#loops">Six loops in</a></li>
+            <li><a href="#aside">A side note on the job</a></li>
+            <li><a href="#sources">Sources</a></li>
+          </ol>
+        </aside>
+
+        <article class="prose">
+          <p class="lead">
+            The use-case here stands in for the real one. A team receives contract documents under a master services
+            agreement and has to map each one to the obligations it creates. Invoices and other files are matched to
+            obligation types by deterministic patterns, with an LLM fallback for the ones the patterns miss. Every few
+            weeks someone asks for a new pattern type, and supporting it means touching a TypeScript repo, a Python/Spark
+            pipeline, and a few business rules about how dates in a filename are read. That recurring request is what I
+            built the loop around.
+          </p>
+
+          <p>
+            The tooling is Palantir's. The skills run inside
+            <a href="https://palantir.com/docs/foundry/ai-fde/overview/" target="_blank" rel="noopener">AI FDE</a>, which
+            operates Foundry through natural language, works in a loop of execute, observe, decide, and by default
+            proposes changes on a branch as a Global Branch proposal or a pull request rather than writing to main. The
+            paper is
+            <a href="https://arxiv.org/html/2608.27454" target="_blank" rel="noopener">WikiSkill</a>, from Tang and
+            colleagues at Google Research, August 2026.
+          </p>
+
+          <h2 id="play"><span class="num">01</span> The loop, as a play</h2>
+          <p>
+            Twelve boxes in two bands. Nothing moves; each beat adds boxes and connections to a layout that is already
+            final, so by the end you have watched the design assemble in the order I actually built it. Press play or
+            step through. Once the play ends, each box is clickable and explains what it does.
+          </p>
+
+          <figure class="panel reveal sl-panel" id="slPanel">
+            <div class="panel__head">
+              <div>
+                <p class="panel__title">From the paper to the platform, in eight beats</p>
+                <p class="panel__hint">Play advances every few seconds. Step with the arrows, or click a beat.</p>
+              </div>
+              <div class="panel__actions">
+                <button type="button" class="chip-btn" id="slPlay" aria-pressed="false">play</button>
+                <button type="button" class="chip-btn" id="slPrev" aria-label="Previous beat">&larr; prev</button>
+                <button type="button" class="chip-btn" id="slNext" aria-label="Next beat">next &rarr;</button>
+                <button type="button" class="chip-btn" id="slEnd">skip to design</button>
+              </div>
+            </div>
+
+            <ol class="sl-beats" id="slBeats" aria-label="Beats">
+              <li><button type="button" class="sl-beat" data-beat="0" aria-pressed="true"><span class="sl-beat__n">1</span><span class="sl-beat__t">Paper</span></button></li>
+              <li><button type="button" class="sl-beat" data-beat="1" aria-pressed="false"><span class="sl-beat__n">2</span><span class="sl-beat__t">Inversion</span></button></li>
+              <li><button type="button" class="sl-beat" data-beat="2" aria-pressed="false"><span class="sl-beat__n">3</span><span class="sl-beat__t">Incidents</span></button></li>
+              <li><button type="button" class="sl-beat" data-beat="3" aria-pressed="false"><span class="sl-beat__n">4</span><span class="sl-beat__t">One plan</span></button></li>
+              <li><button type="button" class="sl-beat" data-beat="4" aria-pressed="false"><span class="sl-beat__n">5</span><span class="sl-beat__t">Ask first</span></button></li>
+              <li><button type="button" class="sl-beat" data-beat="5" aria-pressed="false"><span class="sl-beat__n">6</span><span class="sl-beat__t">Versions</span></button></li>
+              <li><button type="button" class="sl-beat" data-beat="6" aria-pressed="false"><span class="sl-beat__n">7</span><span class="sl-beat__t">Rejoined</span></button></li>
+              <li><button type="button" class="sl-beat" data-beat="7" aria-pressed="false"><span class="sl-beat__n">8</span><span class="sl-beat__t">Status</span></button></li>
+            </ol>
+
+            <div class="sl-stage">
+              <svg
+                class="sl-svg"
+                id="slSvg"
+                viewBox="0 0 1040 620"
+                role="img"
+                aria-labelledby="slSvgTitle slSvgDesc"
+              >
+                <title id="slSvgTitle">The skill loop on Foundry, twelve components in two bands</title>
+                <desc id="slSvgDesc">
+                  Build loop across the top: Request, Contract Builder, Orchestrator with Private Loop State above and
+                  Human Supervisor below, Implementation Skill and Acceptance Skill to the right, ending in an Unmerged
+                  Proposal. Learn loop across the bottom: Wiki, Skill Change Log, Impact Evaluator, Strengthener.
+                </desc>
+                <defs>
+                  <marker id="slArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M0 0.8 L9.5 5 L0 9.2 Z" class="sl-arrowhead" />
+                  </marker>
+                </defs>
+                <g id="slBands">
+                  <text class="sl-band" x="40" y="24">BUILD LOOP · one request at a time</text>
+                  <line class="sl-divider" x1="40" y1="410" x2="1000" y2="410" />
+                  <text class="sl-band" x="40" y="440">LEARN LOOP · across requests</text>
+                </g>
+                <g id="slEdges"></g>
+                <g id="slLabels"></g>
+                <g id="slNodes"></g>
+              </svg>
+            </div>
+
+            <div class="sl-caption" id="slCaption" aria-live="polite">
+              <p class="sl-caption__k" id="slCaptionK">Beat 1 · The paper</p>
+              <p class="sl-caption__t" id="slCaptionT"></p>
+            </div>
+
+            <div class="sl-card" id="slCard" hidden>
+              <div class="sl-card__head">
+                <p class="sl-card__title" id="slCardTitle"></p>
+                <button type="button" class="chip-btn" id="slCardClose" aria-label="Close role card">close</button>
+              </div>
+              <dl class="sl-card__grid">
+                <div><dt>Role</dt><dd id="slCardRole"></dd></div>
+                <div><dt>Reads</dt><dd id="slCardReads"></dd></div>
+                <div><dt>Produces</dt><dd id="slCardProduces"></dd></div>
+                <div><dt>In the paper</dt><dd id="slCardPaper"></dd></div>
+              </dl>
+            </div>
+
+            <figcaption class="sl-figcap">
+              Beats one to seven add components in the order they were built. Beat eight is the design as implemented;
+              click any box for its role. Without JavaScript the full design is shown and the beat captions are listed
+              below the diagram.
+            </figcaption>
+
+            <ol class="sl-nojs" id="slNoJs">
+              <li><b>The paper.</b> Run tasks, compile the traces into a wiki, let a proposer edit the skill. The skill is the product; the task output is scored, not kept as a deliverable.</li>
+              <li><b>The inversion.</b> An implementation skill and an acceptance skill on a global branch. The proposal is the product; the skill can improve later.</li>
+              <li><b>Four incidents.</b> Commits landed outside the loop, one runtime could not validate both repositories, scope grew, a yearless pattern acquired a year. Each incident became a pause condition.</li>
+              <li><b>One plan, one approval.</b> An orchestrator runs the plan, a human approves it once and rules on the pause list. Workers never talk to each other and never see the loop's state.</li>
+              <li><b>Ask before building.</b> The first skill you talk to writes no code. It asks the missing questions and produces the contract the acceptance skill will test. Questions settled here do not surface later as pauses.</li>
+              <li><b>Versions everywhere.</b> Every skill carries a version. The plan pins them; the orchestrator checks for drift at each invocation.</li>
+              <li><b>The paper, reattached.</b> Proposals predict their effect, an evaluator checks the prediction after enough runs, a human applies the change.</li>
+              <li><b>Where it stands.</b> Implemented and running. Six requests so far; no comparable-run metrics yet.</li>
+            </ol>
+          </figure>
+
+          <h2 id="paper"><span class="num">02</span> The paper's loop</h2>
+          <p>
+            WikiSkill keeps three layers on disk: <code>raw/</code> with immutable execution traces, <code>wiki/</code>
+            which compiles those traces into pattern pages, a log and a <code>skill-impact.md</code> tracker, and
+            <code>skills/</code> with the active skill set
+            (<a href="https://arxiv.org/html/2608.27454" target="_blank" rel="noopener">Tang et al.</a>). Each iteration runs the agent on a batch of tasks, samples up to eight traces, updates the wiki, and
+            asks a Skill Proposer for one atomic change to one skill. The change stays only if the validation score
+            strictly improves; otherwise the skill set reverts and the rejection is recorded so it is not proposed
+            again. The wiki is never rolled back.
+          </p>
+          <p>
+            Two details turned out to matter for me. The agent doing the work does not read the wiki during rollouts;
+            when the authors tried giving it access, average performance dropped from 63.7% to 60.9%
+            (<a href="https://arxiv.org/html/2608.27454" target="_blank" rel="noopener">Tang et al.</a>). And the whole apparatus exists to improve the skill. Task outputs are there for scoring; the skill set
+            is what carries over.
+          </p>
+          <p><button type="button" class="chip-btn sl-jump" data-jump="0">Show beat 1 in the play</button></p>
+
+          <h2 id="inversion"><span class="num">03</span> The inversion</h2>
+          <p>
+            My tasks are not a benchmark. They are real requests, and the output is the point. So my first mapping onto
+            Foundry kept the part the paper only uses for measurement, the task run and its output, and skipped the part
+            the paper optimises, the skill edits. Two skills: an implementation skill that makes the code change on a
+            global branch, and an acceptance skill that tests it independently and returns PASS, FAIL or BLOCKED. The
+            proposal was the deliverable. Improving the skills could wait until there was something to learn from.
+          </p>
+          <p>
+            AI FDE proposes changes as a Global Branch proposal or a pull request by default and asks for explicit
+            approval before mutating operations; file edits and dataset builds are auto-approved on feature branches but
+            not on protected ones
+            (<a href="https://palantir.com/docs/foundry/ai-fde/security-and-governance/" target="_blank" rel="noopener">Palantir docs</a>).
+            I leaned on that default: the loop works on branches and a person merges.
+          </p>
+          <p><button type="button" class="chip-btn sl-jump" data-jump="1">Show beat 2 in the play</button></p>
+
+          <h2 id="incidents"><span class="num">04</span> Four incidents</h2>
+          <p>
+            Four things went wrong in the first runs, and each one turned into a rule. Commits landed on the branch from
+            outside the loop, so now the loop stops on branch-state drift until the re-checks pass. One runtime could not
+            validate both the Python and the TypeScript repo; that became the BLOCKED outcome, with a person deciding
+            what happens next. The implementation skill noticed that normalisation differed between the generator and
+            the consumer and asked whether that was in scope; it was, and scope expansion became a pause. A pattern I had
+            specified as yearless got a year added by a test case; I ruled that it is always yearless, and conflicting
+            requirements became a pause.
+          </p>
+          <p>
+            Four more pauses went in without an incident behind them: production mutation, merge or deployment, an
+            unexpected extra resource, and any proposed change to a semantic version or to historical data. The last is
+            a standing rule rather than a lesson. Three of the four were suggested by the agent while I was writing the
+            list.
+          </p>
+          <p><button type="button" class="chip-btn sl-jump" data-jump="2">Show beat 3 in the play</button></p>
+
+          <h2 id="orchestrator"><span class="num">05</span> One plan, one approval</h2>
+          <p>
+            Approving every worker call separately meant one pause per step, so I added an orchestrator skill to own the
+            sequence: implementation, acceptance, cross-runtime acceptance, unmerged proposal. I approve that plan once
+            and am interrupted only by the pause list. Two choices here follow the paper's finding that the worker did
+            better without wiki access. Workers never talk to each other; the orchestrator hands each one a delta, not
+            the whole history. And the loop's own memory, a state record written after every accepted transition and
+            before every pause, is visible only to the orchestrator. The last record of each loop holds the run's
+            numbers: iterations to PASS, blocks, rulings, repairs, time to proposal.
+          </p>
+          <p><button type="button" class="chip-btn sl-jump" data-jump="3">Show beat 4 in the play</button></p>
+
+          <h2 id="contract"><span class="num">06</span> Ask before building</h2>
+          <p>
+            The yearless incident came down to a requirement I had not stated, not to the code. In the paper every task
+            comes with an answer key, so the question never comes up. A real request arrives with some of its
+            requirements unstated. So a contract builder skill became the first thing a request meets. It reads the
+            wiki, asks the questions that are missing, resolves ambiguous policy, and writes the contract the acceptance
+            skill will test against, including which runtimes have to show which evidence. What gets settled there does
+            not come back later as a pause.
+          </p>
+          <p><button type="button" class="chip-btn sl-jump" data-jump="4">Show beat 5 in the play</button></p>
+
+          <h2 id="versions"><span class="num">07</span> Versions everywhere</h2>
+          <p>
+            Once I was editing skills by hand between runs, I could no longer trace a change in behaviour to a change in
+            skill text. Every skill now carries a version and every edit bumps it. The plan pins the versions it was
+            approved against, the state record stores them, and the orchestrator checks for version drift at each worker
+            call, next to branch drift. I treat both as the same condition: the inputs changed after the plan was
+            approved. The paper gets the same thing by recording a unified diff per accepted proposal; I used versions
+            because several skills change independently.
+          </p>
+          <p><button type="button" class="chip-btn sl-jump" data-jump="5">Show beat 6 in the play</button></p>
+
+          <h2 id="reattach"><span class="num">08</span> The paper, reattached</h2>
+          <p>
+            With runs producing numbers and skills carrying versions, I could attach the paper's loop again, this time
+            around the build loop rather than in place of it. Three pieces. A strengthener skill does the Skill
+            Proposer's job: it reads the wiki, the current skill text, and a bounded bundle of applied changes, past
+            assessments and rejected proposals, and writes proposals that say what effect they expect on the run numbers
+            and which numbers must not get worse. A parent-only change log does what <code>skill-impact.md</code> does:
+            the orchestrator records every proposal, my decision and edits, and the exact version transition. An impact
+            evaluator stands in for the validation gate: read-only, versioned on its own, it compares expected with
+            actual across comparable runs and recommends whether to call the strengthener, wait, do nothing, or look
+            into a regression.
+          </p>
+          <p>
+            I departed from the paper in three places on purpose. The gate only advises; I apply every skill change
+            myself, as a separately approved edit outside the run that prompted it. The proposer has to predict its
+            effect before the measurement, which the paper's proposer is not asked to do. And only the two worker skills,
+            implementation and acceptance, are ever proposal targets; the orchestrator, contract builder, evaluator and
+            strengthener are edited by people. That is the paper's split between a fixed harness and an evolving skill
+            set, in a system where the harness is also made of skills.
+          </p>
+          <p><button type="button" class="chip-btn sl-jump" data-jump="6">Show beat 7 in the play</button></p>
+
+          <h2 id="status"><span class="num">09</span> Where it stands</h2>
+          <p>
+            All twelve components exist and six real requests have gone through the build loop. There are no comparable
+            runs yet, so I have nothing to say about the strengthener. The number I am watching is time from request to
+            unmerged proposal, across requests. If it does not come down over the next several runs, I will cut the
+            learn loop back. I will add a results section when there is something to report.
+          </p>
+          <p>
+            One known limit. The loop is single-operator. Its state lives in a per-loop notepad written only by the
+            orchestrator, which is fine until two loops run at once or a pause outlives a session. For concurrent use
+            the state would move to an Ontology object with an Action per transition, which would also give me the
+            audit trail. I have not made that change; nothing has needed it yet.
+          </p>
+          <p>
+            One thing I checked before building any of this. Palantir's AIP Evolve coordinates fleets of AI FDE agents
+            to improve an AI system against a validation strategy
+            (<a href="https://www.palantir.com/docs/foundry/announcements/2026-09/" target="_blank" rel="noopener">Palantir announcements</a>).
+            Its unit of work is an AI system and an evaluation; mine is a controlled engineering change across several
+            Foundry resources. Different jobs, so I did not use it.
+          </p>
+          <p><button type="button" class="chip-btn sl-jump" data-jump="7">Show the final design</button></p>
+
+          <h2 id="loops"><span class="num">10</span> Six loops in</h2>
+          <p>
+            Six real requests in. None of this is a result; it is what kept coming up.
+          </p>
+          <p>
+            Wiki drafts came back in a different shape every loop. I added an outline and a size cap; by loop six the cap
+            held and the outline had drifted again. A payload 150 characters over its limit also stopped a run outright.
+            Formats are now checked at the boundary, with a tolerance band instead of a hard cap.
+          </p>
+          <p>
+            Verifier calls take roughly 60 to 70 percent of a loop and I could not cut them: the worker's environment
+            failed differently each time, wrong profile, wrong branch, a workspace that could not run Spark tests. I am
+            adding an environment-readiness check before the first write rather than removing a verifier.
+          </p>
+          <p>
+            Handoffs shrank by about half, under one rule: every safety fact, evidence item and instruction has to stay
+            recoverable from one canonical place. The loop felt a lot faster; I have not measured that. How well the
+            orchestrator followed the handoff schema also varied with the model running it, which was not the model that
+            wrote its instructions.
+          </p>
+          <p>
+            Contract defects cause pauses that did not need to happen. The contract builder generates the contract, and
+            one contract had seven defects in it, from a pre-write check that could not be satisfied to a wiki binding
+            the worker was not allowed to use. All seven went into the wiki so they are not argued over again, which is
+            the job the paper gives it.
+          </p>
+          <p>
+            Solutions over-fit. One change was fitted to the single file pattern in hand. A September 2026 preprint on
+            self-improving review loops notes that the generalisation judgement cannot be made mechanically and is left
+            to a reviewer, bounded by the checks that can be
+            (<a href="https://arxiv.org/abs/2609.02246" target="_blank" rel="noopener">Wahi</a>). The contract builder's
+            generalisation gate works the same way: it raises the cases a solution should cover with the requester, or
+            at least prompts for that conversation, before the contract is fixed. An abstraction review then sits before
+            acceptance.
+          </p>
+          <p>Loop maintenance has not ended. It has moved.</p>
+
+          <h2 id="aside"><span class="num">11</span> A side note on the job</h2>
+          <p>
+            Before this, improving the pattern matching meant working on the pattern matching. Now it is three layers:
+            improve the function anyway; automate the process that improves it; instrument that process well enough to
+            improve the process. Only the first changes the code base on the day. Whether the other two pay off depends
+            on the request continuing to recur, which is what the time-to-proposal number is for.
+          </p>
+          <p>
+            Similar descriptions appear under the name harness engineering on
+            <a href="https://news.ycombinator.com/item?id=48416264" target="_blank" rel="noopener">Hacker News</a>, in
+            <a href="https://www.reddit.com/r/ExperiencedDevs/comments/1sosciu/saving_challenging_projects_was_my_niche_but_ai/" target="_blank" rel="noopener">r/ExperiencedDevs</a>,
+            and on the
+            <a href="https://stackoverflow.blog/2026/05/21/coding-agents-are-giving-everyone-decision-fatigue/" target="_blank" rel="noopener">Stack Overflow blog</a>.
+            Most of that is about a single code base and a coding agent on a developer's machine. I have seen less
+            written about doing it inside a governed platform, with a list of things the loop may never do and a list of
+            reasons it is allowed to stop and ask. It overlaps with what several companies now call the forward deployed
+            engineer role, a title associated with Palantir and since adopted elsewhere with varying definitions.
+          </p>
+
+          <section class="sources" id="sources">
+            <h2>Sources</h2>
+            <ol>
+              <li>
+                <a href="https://arxiv.org/html/2608.27454" target="_blank" rel="noopener">WikiSkill: Compiling Agent Experience into Persistent Knowledge for Skill Evolution</a>
+                — Tang, Rashtchian, Ferng, Tomkins, Juan, Vu; Google Research; arXiv:2608.27454, 27 Aug 2026
+              </li>
+              <li>
+                <a href="https://palantir.com/docs/foundry/ai-fde/overview/" target="_blank" rel="noopener">AI FDE — Overview</a>
+                — Palantir Foundry docs
+              </li>
+              <li>
+                <a href="https://palantir.com/docs/foundry/ai-fde/security-and-governance/" target="_blank" rel="noopener">AI FDE — Security and governance</a>
+                — Palantir Foundry docs
+              </li>
+              <li>
+                <a href="https://www.palantir.com/docs/foundry/announcements/2026-09/" target="_blank" rel="noopener">Introducing AIP Evolve (general availability)</a>
+                — Palantir Foundry announcements, September 2026
+              </li>
+              <li>
+                <a href="https://arxiv.org/abs/2609.02246" target="_blank" rel="noopener">LLM-as-a-Judge Is Not an Oracle: Why Self-Improving Agents Need Deterministic Guardrails</a>
+                — Wahi; arXiv:2609.02246, 2 Sep 2026
+              </li>
+              <li>
+                <a href="https://news.ycombinator.com/item?id=48416264" target="_blank" rel="noopener">Harness engineering: Leveraging Codex in an agent-first world</a>
+                — Hacker News discussion
+              </li>
+              <li>
+                <a href="https://www.reddit.com/r/ExperiencedDevs/comments/1sosciu/saving_challenging_projects_was_my_niche_but_ai/" target="_blank" rel="noopener">Saving challenging projects was my niche, but AI codebases are making me miserable</a>
+                — r/ExperiencedDevs
+              </li>
+              <li>
+                <a href="https://stackoverflow.blog/2026/05/21/coding-agents-are-giving-everyone-decision-fatigue/" target="_blank" rel="noopener">Coding agents are giving everyone decision fatigue</a>
+                — Stack Overflow blog, May 2026
+              </li>
+            </ol>
+          </section>
+        </article>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer__inner">
+        <p class="footer__legal">Palantir, Foundry, and AIP are trademarks of Palantir Technologies Inc.</p>
+        <p class="footer__legal">
+          This blog is independent and is not affiliated with, endorsed by, or sponsored by Palantir Technologies Inc.
+          The use-case described is hypothetical; no client data, names, or implementation details appear on this page.
+        </p>
+        <p class="footer__privacy">
+          <span class="footer__privacy-label">Privacy note</span>
+          This site uses cookieless, privacy-preserving Cloudflare Web Analytics to understand aggregate traffic trends.
+          It does not use tracking cookies, local storage, or cross-site visitor tracking.
+        </p>
+        <p class="footer__feedback">
+          <span class="footer__feedback-label">Discussion</span>
+          <a
+            href="https://github.com/enterprisescale/enterprisescale.github.io/discussions/1"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Open GitHub Discussions for feedback in a new tab"
+          >
+            Questions, concerns, or feedback via GitHub Discussions
+            <span class="footer__external" aria-hidden="true">↗</span>
+          </a>
+        </p>
+      </div>
+    </footer>
+
+    <!-- Cloudflare Web Analytics -->
+    <script type='module' 
+      src='https://static.cloudflareinsights.com/beacon.min.js' 
+      data-cf-beacon='{"token": "e70d9803a3084641adefa514cc838363"}'>
+    </script>
+    <!-- End Cloudflare Web Analytics -->
+
+    <script src="../core.js"></script>
+    <script src="skill-loop.js"></script>
+  </body>
+</html>

@@ -1,0 +1,398 @@
+/* ---------------------------------------------------------------------------
+   skill-loop.css — per-article styles for "The Paper Wanted Better Skills."
+   Consumes tokens from style.css only. All classes are .sl-* prefixed.
+   No libraries, no external requests.
+--------------------------------------------------------------------------- */
+
+.sl-panel {
+  --sl-gut: var(--space-5);
+}
+
+/* ---------- beat rail ---------- */
+.sl-beats {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-3) var(--sl-gut);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-surface-2);
+}
+.sl-beat {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-2) var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-interactive), color var(--transition-interactive),
+    border-color var(--transition-interactive);
+}
+.sl-beat:hover {
+  background: var(--color-surface-offset);
+  color: var(--color-text);
+}
+.sl-beat[aria-pressed='true'] {
+  background: var(--color-primary-soft);
+  border-color: color-mix(in oklab, var(--color-primary) 35%, transparent);
+  color: var(--color-text);
+}
+.sl-beat__n {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-primary);
+  min-width: 1.2em;
+}
+.sl-beat__t {
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 520px) {
+  .sl-beats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .sl-beat {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    padding: var(--space-2);
+  }
+  .sl-beat__t {
+    display: none;
+  }
+}
+
+/* ---------- stage ---------- */
+.sl-stage {
+  padding: var(--space-4) var(--sl-gut) var(--space-2);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.sl-svg {
+  display: block;
+  width: 100%;
+  min-width: 820px;
+  height: auto;
+  font-family: var(--font-display);
+}
+@media (min-width: 900px) {
+  .sl-svg {
+    min-width: 0;
+    max-width: 100%;
+  }
+}
+
+.sl-band {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  fill: var(--color-text-faint);
+}
+.sl-divider {
+  stroke: var(--color-border);
+  stroke-width: 1;
+  stroke-dasharray: 4 5;
+}
+
+/* nodes */
+.sl-node {
+  cursor: default;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 520ms cubic-bezier(0.16, 1, 0.3, 1), transform 520ms cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+}
+.sl-node.is-on {
+  opacity: 1;
+  transform: translateY(0);
+}
+.sl-node.is-dim {
+  opacity: 0.28;
+}
+.sl-node.is-click {
+  cursor: pointer;
+}
+.sl-node__box {
+  fill: var(--color-surface);
+  stroke: var(--color-border);
+  stroke-width: 1.5;
+  rx: 9;
+  transition: stroke var(--transition-interactive), fill var(--transition-interactive), stroke-width var(--transition-interactive);
+}
+.sl-node.is-click:hover .sl-node__box,
+.sl-node:focus-visible .sl-node__box {
+  stroke: var(--color-primary);
+  stroke-width: 2;
+}
+.sl-node.is-sel .sl-node__box {
+  stroke: var(--color-primary);
+  stroke-width: 2.5;
+  fill: var(--color-primary-soft);
+}
+.sl-node.is-new .sl-node__box {
+  stroke: var(--color-primary);
+  stroke-width: 2.2;
+}
+.sl-node--human .sl-node__box {
+  stroke: var(--color-amber);
+}
+.sl-node--state .sl-node__box {
+  stroke: var(--color-violet);
+  stroke-dasharray: 5 4;
+}
+.sl-node--learn .sl-node__box {
+  stroke: var(--color-teal);
+}
+.sl-node__t {
+  font-family: var(--font-display);
+  font-size: 13.5px;
+  font-weight: 600;
+  fill: var(--color-text);
+  pointer-events: none;
+}
+.sl-node__s {
+  font-family: var(--font-body);
+  font-size: 10.5px;
+  fill: var(--color-text-muted);
+  pointer-events: none;
+}
+.sl-node__paper {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.06em;
+  fill: var(--color-teal);
+  pointer-events: none;
+}
+.sl-ver {
+  opacity: 0;
+  transition: opacity 400ms cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+.sl-ver.is-on {
+  opacity: 1;
+}
+.sl-ver__pill {
+  fill: var(--color-primary);
+  rx: 8;
+}
+.sl-ver__t {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  fill: var(--color-text-inverse);
+}
+
+/* edges */
+.sl-edge {
+  fill: none;
+  stroke: var(--color-text-faint);
+  stroke-width: 1.6;
+  marker-end: url(#slArrow);
+  opacity: 0;
+  transition: opacity 480ms cubic-bezier(0.16, 1, 0.3, 1), stroke var(--transition-interactive);
+}
+.sl-edge.is-on {
+  opacity: 1;
+}
+.sl-edge.is-dim {
+  opacity: 0.22;
+}
+.sl-edge.is-new {
+  stroke: var(--color-primary);
+  stroke-width: 2.2;
+}
+.sl-edge--both {
+  marker-start: url(#slArrow);
+}
+.sl-edge--dotted {
+  stroke-dasharray: 3 5;
+}
+.sl-edge--human {
+  stroke: var(--color-amber);
+}
+.sl-edge--learn {
+  stroke: var(--color-teal);
+}
+.sl-arrowhead {
+  fill: context-stroke;
+}
+@supports not (fill: context-stroke) {
+  .sl-arrowhead {
+    fill: var(--color-text-faint);
+  }
+}
+.sl-elabel {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--color-text-muted);
+  opacity: 0;
+  transition: opacity 480ms cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+.sl-elabel.is-on {
+  opacity: 1;
+}
+.sl-elabel__bg {
+  fill: var(--color-surface);
+  opacity: 0.92;
+}
+
+/* ---------- caption ---------- */
+.sl-caption {
+  padding: var(--space-3) var(--sl-gut) var(--space-4);
+  border-top: 1px solid var(--color-divider);
+  display: grid;
+  gap: var(--space-1);
+  min-height: 5.2em;
+}
+.sl-caption__k {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-primary);
+}
+.sl-caption__t {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  color: color-mix(in oklab, var(--color-text) 92%, var(--color-text-muted));
+  text-wrap: pretty;
+  max-width: 78ch;
+}
+
+/* ---------- role card ---------- */
+.sl-card {
+  margin: 0 var(--sl-gut) var(--space-5);
+  border: 1px solid color-mix(in oklab, var(--color-primary) 35%, var(--color-border));
+  border-left: 3px solid var(--color-primary);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(90deg, var(--color-primary-soft), var(--color-surface) 42%);
+  padding: var(--space-4) var(--space-5);
+  animation: sl-card-in 360ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes sl-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.sl-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.sl-card__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  color: var(--color-text);
+}
+.sl-card__grid {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-6);
+}
+.sl-card__grid > div {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.sl-card__grid dt {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.sl-card__grid dd {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  text-wrap: pretty;
+}
+@media (max-width: 700px) {
+  .sl-card__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sl-figcap {
+  padding: 0 var(--sl-gut) var(--space-4);
+}
+
+/* ---------- no-JS fallback ---------- */
+.sl-nojs {
+  margin: 0;
+  padding: 0 var(--sl-gut) var(--space-5) calc(var(--sl-gut) + 1.2em);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  display: grid;
+  gap: var(--space-2);
+}
+.sl-panel.is-ready .sl-nojs {
+  display: none;
+}
+.sl-panel:not(.is-ready) .sl-beats,
+.sl-panel:not(.is-ready) .sl-caption,
+.sl-panel:not(.is-ready) .panel__actions {
+  display: none;
+}
+.sl-panel:not(.is-ready) .sl-node,
+.sl-panel:not(.is-ready) .sl-edge,
+.sl-panel:not(.is-ready) .sl-elabel,
+.sl-panel:not(.is-ready) .sl-ver {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---------- in-prose jump chips ---------- */
+.sl-jump {
+  cursor: pointer;
+}
+.sl-jump::before {
+  content: '▶ ';
+  font-size: 0.8em;
+}
+
+/* ---------- reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .sl-node,
+  .sl-edge,
+  .sl-elabel,
+  .sl-ver,
+  .sl-node__box,
+  .sl-beat {
+    transition: none;
+  }
+  .sl-card {
+    animation: none;
+  }
+}
+
+/* keep stepper chips on one line */
+.sl-panel .panel__actions .chip-btn {
+  white-space: nowrap;
+}
