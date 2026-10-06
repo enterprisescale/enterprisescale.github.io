@@ -1,0 +1,190 @@
+/* ---------------------------------------------------------------------------
+   home.css — landing page (index of notes). Tokens from style.css only.
+   All classes are .hm-* prefixed.
+--------------------------------------------------------------------------- */
+
+.hm-hero {
+  padding-bottom: var(--space-6);
+}
+
+/* ---------- notes list ---------- */
+.hm-notes {
+  max-width: 54rem;
+  padding-bottom: var(--space-12);
+}
+.hm-notes__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-5);
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-divider);
+}
+.hm-notes__head h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--color-text);
+}
+.hm-notes__hint {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.03em;
+  color: var(--color-text-muted);
+}
+
+.hm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.hm-card {
+  position: relative;
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-6);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--transition-interactive), box-shadow var(--transition-interactive),
+    transform var(--transition-interactive);
+}
+.hm-card:hover {
+  border-color: color-mix(in oklab, var(--color-primary) 45%, var(--color-border));
+  box-shadow: var(--shadow-md);
+}
+.hm-card:focus-within {
+  border-color: var(--color-primary);
+}
+
+.hm-card__meta {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+.hm-card__kicker {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-primary);
+}
+.hm-card__kicker--note {
+  color: var(--color-teal);
+}
+.hm-card__date {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.03em;
+  color: var(--color-text-faint);
+}
+.hm-card__date::before {
+  content: '·';
+  margin-right: var(--space-3);
+}
+
+.hm-card__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+.hm-card__title a {
+  color: var(--color-text);
+  text-decoration: none;
+}
+.hm-card__title a::after {
+  /* whole card is clickable */
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.hm-card__title a:hover {
+  color: var(--color-primary);
+}
+.hm-card__title a:focus-visible {
+  outline: none;
+}
+
+.hm-card__deck {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: 1.6;
+  color: var(--color-text-muted);
+  max-width: 68ch;
+  text-wrap: pretty;
+}
+.hm-card__deck code {
+  font-size: 0.9em;
+}
+
+.hm-card__tags {
+  margin: var(--space-1) 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.hm-card--soon {
+  border-style: dashed;
+  background: transparent;
+  box-shadow: none;
+}
+.hm-card--soon:hover {
+  border-color: var(--color-border);
+  box-shadow: none;
+}
+.hm-card--soon .hm-card__kicker,
+.hm-card--soon .hm-card__title {
+  color: var(--color-text-faint);
+}
+.hm-card--soon .hm-card__deck {
+  color: var(--color-text-faint);
+}
+
+/* ---------- about ---------- */
+.hm-about {
+  max-width: 54rem;
+  padding-bottom: var(--space-16);
+}
+.hm-about h2 {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  margin: 0 0 var(--space-3);
+  color: var(--color-text);
+}
+.hm-about p {
+  margin: 0 0 var(--space-3);
+  color: var(--color-text-muted);
+  line-height: 1.65;
+  max-width: 68ch;
+}
+
+@media (max-width: 760px) {
+  .hm-card {
+    padding: var(--space-4) var(--space-4);
+  }
+  .hm-card__title {
+    font-size: var(--text-lg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hm-card {
+    transition: none;
+  }
+}
